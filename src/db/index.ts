@@ -9,6 +9,10 @@ export function createDb() {
     connectionString: env.DATABASE_URL,
   })
 
+  pool.on('error', (error) => {
+    console.error('Unexpected PostgreSQL idle client error', error)
+  })
+
   return drizzle({ client: pool, schema })
 }
 

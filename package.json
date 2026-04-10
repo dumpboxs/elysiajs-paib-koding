@@ -12,7 +12,7 @@
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
     "db:migrate": "drizzle-kit migrate",
-    "db:start": "docker compose up -d",
+    "db:start": "docker compose up -d --wait",
     "db:watch": "docker compose up",
     "db:stop": "docker compose stop",
     "db:down": "docker compose down"
