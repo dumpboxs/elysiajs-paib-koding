@@ -11,14 +11,32 @@ import { selectPostSchema } from '#/schemas/drizzle-zod'
 import {
   createPostBodySchema,
   type CreatePostBodySchema,
+  getPostByIdParamsSchema,
+  getPostsQuerySchema,
+  type GetPostsQuerySchema,
 } from '#/schemas/post.schema'
-import { postService } from '#/services/post.service'
+import {
+  InvalidCursorError,
+  postService,
+} from '#/services/post.service'
 
-type AuthenticatedUser = typeof auth.$Infer.Session.user
+type AuthenticatedUser = {
+  id: string
+  [key: string]: unknown
+}
 
-type AuthenticatedSession = typeof auth.$Infer.Session | null
+type AuthenticatedSession = {
+  session: Record<string, unknown>
+  user: AuthenticatedUser
+} | null
 
 type CreatePostResult = Awaited<ReturnType<typeof postService.create>>
+type ListPostsResult = Awaited<
+  ReturnType<typeof postService.listPublishedWithCursor>
+>
+type FindPostByIdResult = Awaited<
+  ReturnType<typeof postService.findPublishedById>
+>
 
 type AuthorizeCreatePostInput = {
   body: CreatePostBodySchema
@@ -31,8 +49,10 @@ type PostRoutesDeps = {
     data: CreatePostBodySchema,
     authorId: string
   ) => Promise<CreatePostResult | null | undefined>
+  findPostById: (id: string) => Promise<FindPostByIdResult | null | undefined>
   getSession: (request: Request) => Promise<AuthenticatedSession>
   isRateLimited: (input: AuthorizeCreatePostInput) => Promise<boolean>
+  listPosts: (query: GetPostsQuerySchema) => Promise<ListPostsResult>
 }
 
 export type CreatePostRoutesDeps = Partial<PostRoutesDeps>
@@ -53,9 +73,26 @@ const createPostResponseSchema = ApiSuccessSchema(
   message: z.literal('Post created successfully'),
 })
 
+const getPostByIdResponseSchema = ApiSuccessSchema(
+  postResponseDataSchema
+).extend({
+  message: z.literal('Post fetched successfully'),
+})
+
+const getPostsResponseSchema = ApiSuccessSchema(
+  z.object({
+    items: z.array(postResponseDataSchema),
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+  })
+).extend({
+  message: z.literal('Posts fetched successfully'),
+})
+
 const defaultPostRoutesDeps: PostRoutesDeps = {
   authorizeCreatePost: async () => true,
   createPost: (data, authorId) => postService.create(data, authorId),
+  findPostById: (id) => postService.findPublishedById(id),
   getSession: async (request) => {
     const session = await auth.api.getSession({
       headers: request.headers,
@@ -69,6 +106,7 @@ const defaultPostRoutesDeps: PostRoutesDeps = {
     }
   },
   isRateLimited: async () => false,
+  listPosts: (query) => postService.listPublishedWithCursor(query),
 }
 
 const isUniqueConstraintError = (
@@ -90,7 +128,14 @@ const toDateString = (value: unknown) => {
   return new Date(String(value)).toISOString()
 }
 
-const mapCreatePostResponse = (post: NonNullable<CreatePostResult>) => ({
+const mapPostResponse = <
+  T extends {
+    createdAt: unknown
+    updatedAt: unknown
+  },
+>(
+  post: T
+) => ({
   ...post,
   createdAt: toDateString(post.createdAt),
   updatedAt: post.updatedAt ? toDateString(post.updatedAt) : null,
@@ -133,51 +178,116 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
     },
   })
 
-  return new Elysia({ prefix: '/api/posts' }).use(authMacro).post(
-    '/',
-    async ({ body, user }) => {
-      if (!(await runtimeDeps.authorizeCreatePost({ body, user }))) {
-        return elysiaStatus(403, createErrorResponse(403))
-      }
+  return new Elysia({ prefix: '/api/posts' })
+    .use(authMacro)
+    .get(
+      '/',
+      async ({ query }) => {
+        try {
+          const posts = await runtimeDeps.listPosts(query)
 
-      if (await runtimeDeps.isRateLimited({ body, user })) {
-        return elysiaStatus(429, createErrorResponse(429))
-      }
+          return {
+            success: true,
+            message: 'Posts fetched successfully',
+            data: {
+              items: posts.items.map((post) => mapPostResponse(post)),
+              nextCursor: posts.nextCursor,
+              hasMore: posts.hasMore,
+            },
+          }
+        } catch (error) {
+          if (error instanceof InvalidCursorError) {
+            return elysiaStatus(
+              400,
+              createErrorResponse(400, {
+                message: 'Invalid cursor',
+              })
+            )
+          }
 
-      try {
-        const post = await runtimeDeps.createPost(body, user.id)
-
-        if (!post) return elysiaStatus(500, createErrorResponse(500))
-
-        return {
-          success: true,
-          message: 'Post created successfully',
-          data: mapCreatePostResponse(post),
+          throw error
         }
-      } catch (error) {
-        if (isUniqueConstraintError(error)) {
-          const isSlugConstraint =
-            error.constraint?.includes('slug') ?? error.detail?.includes('slug')
+      },
+      {
+        query: getPostsQuerySchema,
+        response: withStandardResponses({
+          200: getPostsResponseSchema,
+        }),
+      }
+    )
+    .get(
+      '/:id',
+      async ({ params }) => {
+        const post = await runtimeDeps.findPostById(params.id)
 
+        if (!post) {
           return elysiaStatus(
-            400,
-            createErrorResponse(400, {
-              message: isSlugConstraint ? 'Slug already exists' : 'Bad request',
+            404,
+            createErrorResponse(404, {
+              message: 'Post not found',
             })
           )
         }
 
-        throw error
+        return {
+          success: true,
+          message: 'Post fetched successfully',
+          data: mapPostResponse(post),
+        }
+      },
+      {
+        params: getPostByIdParamsSchema,
+        response: withStandardResponses({
+          200: getPostByIdResponseSchema,
+        }),
       }
-    },
-    {
-      requiredAuth: true,
-      body: createPostBodySchema,
-      response: withStandardResponses({
-        200: createPostResponseSchema,
-      }),
-    }
-  )
+    )
+    .post(
+      '/',
+      async ({ body, user }) => {
+        if (!(await runtimeDeps.authorizeCreatePost({ body, user }))) {
+          return elysiaStatus(403, createErrorResponse(403))
+        }
+
+        if (await runtimeDeps.isRateLimited({ body, user })) {
+          return elysiaStatus(429, createErrorResponse(429))
+        }
+
+        try {
+          const post = await runtimeDeps.createPost(body, user.id)
+
+          if (!post) return elysiaStatus(500, createErrorResponse(500))
+
+          return {
+            success: true,
+            message: 'Post created successfully',
+            data: mapPostResponse(post),
+          }
+        } catch (error) {
+          if (isUniqueConstraintError(error)) {
+            const isSlugConstraint =
+              error.constraint?.includes('slug') ??
+              error.detail?.includes('slug')
+
+            return elysiaStatus(
+              400,
+              createErrorResponse(400, {
+                message: isSlugConstraint ? 'Slug already exists' : 'Bad request',
+              })
+            )
+          }
+
+          throw error
+        }
+      },
+      {
+        requiredAuth: true,
+        body: createPostBodySchema,
+        response: withStandardResponses({
+          200: createPostResponseSchema,
+        }),
+      }
+    )
 }
 
 export const postRoutes = createPostRoutes()

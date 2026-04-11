@@ -8,6 +8,7 @@ import {
   createPostRoutes,
   type CreatePostRoutesDeps,
 } from '#/routes/post.route'
+import { InvalidCursorError } from '#/services/post.service'
 
 const validRequestBody = {
   title: 'Post title',
@@ -33,11 +34,17 @@ const buildApp = (deps: CreatePostRoutesDeps = {}) => {
   const defaultDeps: CreatePostRoutesDeps = {
     authorizeCreatePost: async () => true,
     createPost: async () => createdPost,
+    findPostById: async () => createdPost,
     getSession: async () => ({
       session: { id: 'session-id' },
       user: { id: createdPost.authorId },
     }),
     isRateLimited: async () => false,
+    listPosts: async () => ({
+      items: [createdPost],
+      nextCursor: 'next-cursor-token',
+      hasMore: true,
+    }),
   }
 
   return new Elysia()
@@ -84,7 +91,83 @@ const postRequest = (payload: unknown) =>
     body: JSON.stringify(payload),
   })
 
+const getPostsRequest = (query?: URLSearchParams) =>
+  new Request(
+    `http://localhost/api/posts${query ? `?${query.toString()}` : ''}`
+  )
+
+const getPostByIdRequest = (id: string) =>
+  new Request(`http://localhost/api/posts/${id}`)
+
 describe('post.route response contract', () => {
+  it('returns 200 on get posts with cursor pagination payload', async () => {
+    const app = buildApp()
+    const response = await app.handle(
+      getPostsRequest(
+        new URLSearchParams({
+          limit: '10',
+        })
+      )
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body['success']).toBe(true)
+    expect(body['message']).toBe('Posts fetched successfully')
+
+    const data = body['data'] as Record<string, unknown>
+    expect(Array.isArray(data['items'])).toBe(true)
+    expect(data['nextCursor']).toBe('next-cursor-token')
+    expect(data['hasMore']).toBe(true)
+  })
+
+  it('returns 400 on invalid cursor for get posts', async () => {
+    const app = buildApp({
+      listPosts: async () => {
+        throw new InvalidCursorError()
+      },
+    })
+    const response = await app.handle(
+      getPostsRequest(
+        new URLSearchParams({
+          cursor: 'invalid-cursor',
+        })
+      )
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(400)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('BAD_REQUEST')
+    expect(body['message']).toBe('Invalid cursor')
+  })
+
+  it('returns 200 on get one post by id', async () => {
+    const app = buildApp()
+    const response = await app.handle(getPostByIdRequest(createdPost.id))
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body['success']).toBe(true)
+    expect(body['message']).toBe('Post fetched successfully')
+
+    const data = body['data'] as Record<string, unknown>
+    expect(data['id']).toBe(createdPost.id)
+  })
+
+  it('returns 404 on get one post by id when not found', async () => {
+    const app = buildApp({
+      findPostById: async () => null,
+    })
+    const response = await app.handle(getPostByIdRequest(createdPost.id))
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(404)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('NOT_FOUND')
+    expect(body['message']).toBe('Post not found')
+  })
+
   it('returns 200 on successful create', async () => {
     const app = buildApp()
     const response = await app.handle(postRequest(validRequestBody))
