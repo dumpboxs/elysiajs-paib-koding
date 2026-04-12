@@ -6,6 +6,7 @@ import { env } from '#/env'
 import { auth, OpenAPI } from '#/lib/auth'
 import { createOpenApiConfig } from '#/lib/openapi'
 import { apiErrorPlugin } from '#/plugins/api-error.plugin'
+import { engagementRoutes } from '#/routes/engagement.route'
 import { postRoutes } from '#/routes/post.route'
 
 const app = new Elysia()
@@ -30,6 +31,7 @@ const app = new Elysia()
   .use(apiErrorPlugin)
   .mount('/auth', auth.handler)
   .use(postRoutes)
+  .use(engagementRoutes)
   .get('/', () => 'Hello Elysia')
   .listen(env.PORT)
 

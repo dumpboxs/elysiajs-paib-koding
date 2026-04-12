@@ -14,7 +14,7 @@ export const OPENAPI_INFO = {
 
 export const createOpenApiConfig = (
   documentation: Partial<OpenApiDocumentation> = {}
-): ElysiaOpenAPIConfig => ({
+): ElysiaOpenAPIConfig<true, typeof OPENAPI_DOCS_PATH> => ({
   path: OPENAPI_DOCS_PATH,
   documentation: {
     info: OPENAPI_INFO,
