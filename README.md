@@ -24,5 +24,5 @@ Anonymous post views do not store plaintext IP addresses. The app stores
   boundary, purge historical anonymous view hashes after rotating.
 - Retention note: migration `0002` removes legacy plaintext IP values from the
   existing `views` table before the hashed column is enforced. Authenticated
-  legacy rows have the old IP nulled; anonymous legacy rows are deleted because
-  their only actor identifier was raw IP.
+  legacy rows have the old IP nulled; anonymous legacy rows are preserved with
+  the sentinel value `legacy:redacted` so historical view counts remain intact.

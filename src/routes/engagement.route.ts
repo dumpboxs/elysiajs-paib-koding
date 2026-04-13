@@ -39,12 +39,18 @@ type AuthenticatedSession = {
 } | null
 
 type ToggleLikeResult = Awaited<ReturnType<typeof engagementService.toggleLike>>
-type CreateCommentResult = Awaited<ReturnType<typeof engagementService.createComment>>
+type CreateCommentResult = Awaited<
+  ReturnType<typeof engagementService.createComment>
+>
 type GetCommentsResult = Awaited<
   ReturnType<typeof engagementService.getCommentsByPost>
 >
-type UpdateCommentResult = Awaited<ReturnType<typeof engagementService.updateComment>>
-type DeleteCommentResult = Awaited<ReturnType<typeof engagementService.deleteComment>>
+type UpdateCommentResult = Awaited<
+  ReturnType<typeof engagementService.updateComment>
+>
+type DeleteCommentResult = Awaited<
+  ReturnType<typeof engagementService.deleteComment>
+>
 
 type EngagementRoutesDeps = {
   toggleLike: (
@@ -72,7 +78,11 @@ type EngagementRoutesDeps = {
     userId: string
   ) => Promise<DeleteCommentResult>
   getCommentsCount: (postId: string) => Promise<number>
-  trackView: (postId: string, userId?: string, viewerIpHash?: string) => Promise<void>
+  trackView: (
+    postId: string,
+    userId?: string,
+    viewerIpHash?: string
+  ) => Promise<void>
   getViewsCount: (postId: string) => Promise<number>
   getSession: (request: Request) => Promise<AuthenticatedSession>
   getClientIp: (request: Request) => string | undefined
@@ -127,8 +137,10 @@ const parseForwardedIp = (value: string | null) => {
 const defaultDeps: EngagementRoutesDeps = {
   toggleLike: (data, userId) => engagementService.toggleLike(data, userId),
   getLikesCount: (postId) => engagementService.getLikesCount(postId),
-  hasUserLiked: (postId, userId) => engagementService.hasUserLiked(postId, userId),
-  createComment: (data, userId) => engagementService.createComment(data, userId),
+  hasUserLiked: (postId, userId) =>
+    engagementService.hasUserLiked(postId, userId),
+  createComment: (data, userId) =>
+    engagementService.createComment(data, userId),
   getCommentsByPost: (postId, page, limit) =>
     engagementService.getCommentsByPost(postId, page, limit),
   updateComment: (commentId, data, userId) =>
@@ -421,7 +433,9 @@ export const createEngagementRoutes = (
               content: comment.content,
               parentId: comment.parentId,
               createdAt: toDateString(comment.createdAt),
-              updatedAt: comment.updatedAt ? toDateString(comment.updatedAt) : null,
+              updatedAt: comment.updatedAt
+                ? toDateString(comment.updatedAt)
+                : null,
             },
           }
         } catch (error) {
@@ -447,7 +461,11 @@ export const createEngagementRoutes = (
       '/comments/:id',
       async ({ params, body, user }) => {
         try {
-          const comment = await runtimeDeps.updateComment(params.id, body, user.id)
+          const comment = await runtimeDeps.updateComment(
+            params.id,
+            body,
+            user.id
+          )
 
           if (!comment) {
             return elysiaStatus(
@@ -464,7 +482,9 @@ export const createEngagementRoutes = (
             data: {
               id: comment.id,
               content: comment.content,
-              updatedAt: comment.updatedAt ? toDateString(comment.updatedAt) : null,
+              updatedAt: comment.updatedAt
+                ? toDateString(comment.updatedAt)
+                : null,
             },
           }
         } catch (error) {
@@ -563,6 +583,16 @@ export const createEngagementRoutes = (
         try {
           const clientIp = runtimeDeps.getClientIp(request)
           const viewerIpHash = clientIp ? hashViewerIp(clientIp) : undefined
+
+          if (!user?.id && !viewerIpHash) {
+            return elysiaStatus(
+              400,
+              createErrorResponse(400, {
+                message:
+                  'Unable to identify viewer: authentication or client IP required',
+              })
+            )
+          }
 
           await runtimeDeps.trackView(body.postId, user?.id, viewerIpHash)
 
