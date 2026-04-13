@@ -61,12 +61,15 @@ export const OpenAPI = {
   getPaths: (prefix = '/auth/api') =>
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
     getSchema().then(({ paths }) => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const reference: typeof paths = Object.create(null)
-      for (const path of Object.keys(paths)) {
+      const schemaPaths = paths ?? {}
+      const reference: Record<string, unknown> = Object.create(null)
+
+      for (const path of Object.keys(schemaPaths)) {
         const key = prefix + path
-        reference[key] = paths[path]
-        for (const method of Object.keys(paths[path])) {
+        const operations = schemaPaths[path] ?? {}
+
+        reference[key] = operations
+        for (const method of Object.keys(operations)) {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
           const operation = (reference[key] as any)[method]
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
