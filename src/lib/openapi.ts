@@ -6,7 +6,7 @@ type OpenApiDocumentation = NonNullable<ElysiaOpenAPIConfig['documentation']>
 export const OPENAPI_DOCS_PATH = '/docs'
 
 export const OPENAPI_INFO = {
-  title: 'ElysiaJS Paib Koding API',
+  title: 'Marvticle API',
   version: '1.0.0',
   description:
     'REST API untuk aplikasi blog dengan autentikasi Better Auth dan manajemen posts.',
