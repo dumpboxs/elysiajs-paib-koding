@@ -1,5 +1,10 @@
 import { Elysia } from 'elysia'
 
+import { getRequestContext } from '#/lib/logger/context'
+import {
+  createServiceLogger,
+  type AppLogger,
+} from '#/lib/logger/index'
 import {
   createErrorResponse,
   isStandardErrorStatus,
@@ -52,8 +57,57 @@ const getStatusWrapper = (
   }
 }
 
-export const apiErrorPlugin = new Elysia({ name: 'api-error-plugin' })
-  .onError({ as: 'global' }, ({ code, error, status }) => {
+type CreateApiErrorPluginOptions = {
+  logger?: AppLogger
+}
+
+const resolveStatusCode = (code: string | number) => {
+  if (typeof code === 'number') return code
+  if (code === 'VALIDATION') return 422
+  if (
+    code === 'PARSE' ||
+    code === 'INVALID_FILE_TYPE' ||
+    code === 'INVALID_COOKIE_SIGNATURE'
+  ) {
+    return 400
+  }
+  if (code === 'NOT_FOUND') return 404
+  if (code === 'INTERNAL_SERVER_ERROR') return 500
+
+  return 500
+}
+
+export const createApiErrorPlugin = (
+  options: CreateApiErrorPluginOptions = {}
+) => {
+  const logger = (options.logger ?? createServiceLogger('apiError')).child(
+    'apiError'
+  )
+
+  return new Elysia({ name: 'api-error-plugin' })
+    .onError({ as: 'global' }, ({ code, error, request, status }) => {
+      const requestContext = getRequestContext()
+      const normalizedStatusCode = resolveStatusCode(code)
+      const validationErrors =
+        code === 'VALIDATION' ? toValidationErrorMap(error.all) : undefined
+
+      logger[normalizedStatusCode >= 500 ? 'error' : 'warn']({
+        message: `API Error: ${String(code)}`,
+        context: {
+          requestId: requestContext?.requestId,
+        },
+        metadata: {
+          errorCode: code,
+          statusCode: normalizedStatusCode,
+          method: request.method,
+          path: new URL(request.url).pathname,
+          ...(validationErrors && Object.keys(validationErrors).length > 0
+            ? { validationErrors }
+            : {}),
+        },
+        error,
+      })
+
     if (code === 'VALIDATION') {
       const errors = toValidationErrorMap(error.all)
 
@@ -94,39 +148,42 @@ export const apiErrorPlugin = new Elysia({ name: 'api-error-plugin' })
 
     return status(500, createErrorResponse(500))
   })
-  .mapResponse({ as: 'global' }, ({ response, set }) => {
-    const wrappedStatusResponse = getStatusWrapper(response)
+    .mapResponse({ as: 'global' }, ({ response, set }) => {
+      const wrappedStatusResponse = getStatusWrapper(response)
 
-    if (
-      wrappedStatusResponse &&
-      isStandardErrorStatus(wrappedStatusResponse.code)
-    ) {
-      return Response.json(
-        normalizeErrorResponse(
-          wrappedStatusResponse.code,
-          wrappedStatusResponse.payload
-        ),
-        {
-          status: wrappedStatusResponse.code,
-        }
-      )
-    }
+      if (
+        wrappedStatusResponse &&
+        isStandardErrorStatus(wrappedStatusResponse.code)
+      ) {
+        return Response.json(
+          normalizeErrorResponse(
+            wrappedStatusResponse.code,
+            wrappedStatusResponse.payload
+          ),
+          {
+            status: wrappedStatusResponse.code,
+          }
+        )
+      }
 
-    const responseStatus =
-      response instanceof Response ? response.status : undefined
+      const responseStatus =
+        response instanceof Response ? response.status : undefined
 
-    const statusCode = parseStatusCode(set.status ?? responseStatus)
+      const statusCode = parseStatusCode(set.status ?? responseStatus)
 
-    if (!Number.isFinite(statusCode) || !isStandardErrorStatus(statusCode))
-      return
+      if (!Number.isFinite(statusCode) || !isStandardErrorStatus(statusCode))
+        return
 
-    if (response instanceof Response) {
-      return Response.json(createErrorResponse(statusCode), {
+      if (response instanceof Response) {
+        return Response.json(createErrorResponse(statusCode), {
+          status: statusCode,
+        })
+      }
+
+      return Response.json(normalizeErrorResponse(statusCode, response), {
         status: statusCode,
       })
-    }
-
-    return Response.json(normalizeErrorResponse(statusCode, response), {
-      status: statusCode,
     })
-  })
+}
+
+export const apiErrorPlugin = createApiErrorPlugin()

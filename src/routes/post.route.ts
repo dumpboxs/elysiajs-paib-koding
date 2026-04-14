@@ -1,7 +1,8 @@
 import Elysia, { status as elysiaStatus } from 'elysia'
 import { z } from 'zod'
 
-import { auth } from '#/lib/auth'
+import { getRequestAuthSession } from '#/lib/auth'
+import { createServiceLogger } from '#/lib/logger'
 import {
   ApiSuccessSchema,
   createErrorResponse,
@@ -19,6 +20,8 @@ import {
   InvalidCursorError,
   postService,
 } from '#/services/post.service'
+
+const logger = createServiceLogger('postRoutes')
 
 type AuthenticatedUser = {
   id: string
@@ -94,9 +97,7 @@ const defaultPostRoutesDeps: PostRoutesDeps = {
   createPost: (data, authorId) => postService.create(data, authorId),
   findPostById: (id) => postService.findPublishedById(id),
   getSession: async (request) => {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    })
+    const session = await getRequestAuthSession(request)
 
     if (!session) return null
 
@@ -155,7 +156,19 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
       async resolve({ request }) {
         const session = await runtimeDeps.getSession(request)
 
-        if (!session) return
+        if (!session) {
+          logger.debug({
+            message: 'Optional auth resolved anonymously',
+          })
+          return
+        }
+
+        logger.debug({
+          message: 'Optional auth resolved authenticated user',
+          metadata: {
+            userId: session.user.id,
+          },
+        })
 
         return {
           session: session.session,
@@ -168,7 +181,19 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
       async resolve({ request }) {
         const session = await runtimeDeps.getSession(request)
 
-        if (!session) return elysiaStatus(401, createErrorResponse(401))
+        if (!session) {
+          logger.warn({
+            message: 'Required auth failed for post route',
+          })
+          return elysiaStatus(401, createErrorResponse(401))
+        }
+
+        logger.debug({
+          message: 'Required auth resolved authenticated user',
+          metadata: {
+            userId: session.user.id,
+          },
+        })
 
         return {
           session: session.session,
@@ -183,8 +208,25 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
     .get(
       '/',
       async ({ query }) => {
+        logger.debug({
+          message: 'Processing list posts request',
+          metadata: {
+            cursor: query.cursor ?? null,
+            limit: query.limit,
+          },
+        })
+
         try {
           const posts = await runtimeDeps.listPosts(query)
+
+          logger.debug({
+            message: 'Mapped list posts response',
+            metadata: {
+              count: posts.items.length,
+              hasMore: posts.hasMore,
+              nextCursor: posts.nextCursor,
+            },
+          })
 
           return {
             success: true,
@@ -197,6 +239,13 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
           }
         } catch (error) {
           if (error instanceof InvalidCursorError) {
+            logger.warn({
+              message: 'List posts rejected due to invalid cursor',
+              metadata: {
+                cursor: query.cursor ?? null,
+              },
+              error,
+            })
             return elysiaStatus(
               400,
               createErrorResponse(400, {
@@ -225,9 +274,22 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
     .get(
       '/:id',
       async ({ params }) => {
+        logger.debug({
+          message: 'Processing get post by id request',
+          metadata: {
+            postId: params.id,
+          },
+        })
+
         const post = await runtimeDeps.findPostById(params.id)
 
         if (!post) {
+          logger.warn({
+            message: 'Post route could not find published post',
+            metadata: {
+              postId: params.id,
+            },
+          })
           return elysiaStatus(
             404,
             createErrorResponse(404, {
@@ -235,6 +297,13 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
             })
           )
         }
+
+        logger.debug({
+          message: 'Mapped single post response',
+          metadata: {
+            postId: post.id,
+          },
+        })
 
         return {
           success: true,
@@ -258,11 +327,38 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
     .post(
       '/',
       async ({ body, user }) => {
-        if (!(await runtimeDeps.authorizeCreatePost({ body, user }))) {
+        logger.debug({
+          message: 'Processing create post request',
+          metadata: {
+            userId: user.id,
+            slug: body.slug,
+          },
+        })
+
+        const authorized = await runtimeDeps.authorizeCreatePost({ body, user })
+
+        logger.debug({
+          message: 'Post creation authorization evaluated',
+          metadata: {
+            authorized,
+            userId: user.id,
+          },
+        })
+
+        if (!authorized) {
           return elysiaStatus(403, createErrorResponse(403))
         }
 
-        if (await runtimeDeps.isRateLimited({ body, user })) {
+        const rateLimited = await runtimeDeps.isRateLimited({ body, user })
+
+        if (rateLimited) {
+          logger.warn({
+            message: 'Post creation rate limit exceeded',
+            metadata: {
+              userId: user.id,
+              slug: body.slug,
+            },
+          })
           return elysiaStatus(429, createErrorResponse(429))
         }
 
@@ -270,6 +366,14 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
           const post = await runtimeDeps.createPost(body, user.id)
 
           if (!post) return elysiaStatus(500, createErrorResponse(500))
+
+          logger.info({
+            message: 'Create post route completed',
+            metadata: {
+              postId: post.id,
+              userId: user.id,
+            },
+          })
 
           return {
             success: true,
@@ -281,6 +385,16 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
             const isSlugConstraint =
               error.constraint?.includes('slug') ??
               error.detail?.includes('slug')
+
+            logger.warn({
+              message: 'Create post route hit unique constraint',
+              metadata: {
+                userId: user.id,
+                slug: body.slug,
+                constraint: error.constraint,
+              },
+              error,
+            })
 
             return elysiaStatus(
               400,

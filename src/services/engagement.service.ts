@@ -15,11 +15,14 @@ import {
   userTable,
   viewTable,
 } from '#/db/schemas'
+import { createServiceLogger } from '#/lib/logger'
 import type {
   CreateCommentBodySchema,
   ToggleLikeBodySchema,
   UpdateCommentBodySchema,
 } from '#/schemas/engagement.schema'
+
+const logger = createServiceLogger('engagementService')
 
 type PublicCommentUser = {
   id: string
@@ -179,6 +182,13 @@ export class InvalidCommentParentError extends Error {
 }
 
 const assertPublishedPost = async (postId: string) => {
+  logger.debug({
+    message: 'Verifying published post for engagement',
+    metadata: {
+      postId,
+    },
+  })
+
   const post = await db
     .select({ id: postTable.id })
     .from(postTable)
@@ -191,61 +201,145 @@ const assertPublishedPost = async (postId: string) => {
     .limit(1)
     .then((rows) => rows[0])
 
-  if (!post) throw new PostNotFoundError()
+  if (!post) {
+    logger.warn({
+      message: 'Engagement target post not found',
+      metadata: {
+        postId,
+      },
+    })
+    throw new PostNotFoundError()
+  }
 
   return post
 }
 
 export const engagementService = {
   toggleLike: async (data: ToggleLikeBodySchema, userId: string) => {
-    await assertPublishedPost(data.postId)
+    const startedAt = performance.now()
 
-    const existingLike = await db
-      .select({ id: likeTable.id })
-      .from(likeTable)
-      .where(
-        and(
-          eq(likeTable.postId, data.postId),
-          eq(likeTable.userId, userId)
-        )
-      )
-      .limit(1)
-      .then((rows) => rows[0])
-
-    if (existingLike) {
-      await db.delete(likeTable).where(eq(likeTable.id, existingLike.id))
-
-      return {
-        liked: false,
-        likesCount: await engagementService.getLikesCount(data.postId),
-      }
-    }
-
-    try {
-      await db.insert(likeTable).values({
+    logger.info({
+      message: 'Toggling post like',
+      metadata: {
         postId: data.postId,
         userId,
-      })
-    } catch (error) {
-      if (!isUniqueConstraintError(error)) throw error
-    }
+      },
+    })
 
-    return {
-      liked: true,
-      likesCount: await engagementService.getLikesCount(data.postId),
+    try {
+      await assertPublishedPost(data.postId)
+
+      const existingLike = await db
+        .select({ id: likeTable.id })
+        .from(likeTable)
+        .where(
+          and(
+            eq(likeTable.postId, data.postId),
+            eq(likeTable.userId, userId)
+          )
+        )
+        .limit(1)
+        .then((rows) => rows[0])
+
+      if (existingLike) {
+        await db.delete(likeTable).where(eq(likeTable.id, existingLike.id))
+
+        const result = {
+          liked: false,
+          likesCount: await engagementService.getLikesCount(data.postId),
+        }
+
+        logger.info({
+          message: 'Post like toggled',
+          metadata: {
+            postId: data.postId,
+            userId,
+            action: 'unlike',
+            likesCount: result.likesCount,
+          },
+          duration: performance.now() - startedAt,
+        })
+
+        return result
+      }
+
+      try {
+        await db.insert(likeTable).values({
+          postId: data.postId,
+          userId,
+        })
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) throw error
+      }
+
+      const result = {
+        liked: true,
+        likesCount: await engagementService.getLikesCount(data.postId),
+      }
+
+      logger.info({
+        message: 'Post like toggled',
+        metadata: {
+          postId: data.postId,
+          userId,
+          action: 'like',
+          likesCount: result.likesCount,
+        },
+        duration: performance.now() - startedAt,
+      })
+
+      return result
+    } catch (error) {
+      logger.error({
+        message: 'Toggle post like failed',
+        metadata: {
+          postId: data.postId,
+          userId,
+        },
+        error,
+        duration: performance.now() - startedAt,
+      })
+
+      throw error
     }
   },
 
   getLikesCount: async (postId: string) => {
-    await assertPublishedPost(postId)
+    const startedAt = performance.now()
 
-    const result = await db
-      .select({ count: count() })
-      .from(likeTable)
-      .where(eq(likeTable.postId, postId))
-      .then((rows) => rows[0])
+    try {
+      await assertPublishedPost(postId)
 
-    return toNumber(result?.count)
+      const result = await db
+        .select({ count: count() })
+        .from(likeTable)
+        .where(eq(likeTable.postId, postId))
+        .then((rows) => rows[0])
+
+      const countValue = toNumber(result?.count)
+
+      logger.debug({
+        message: 'Fetched likes count',
+        metadata: {
+          postId,
+          count: countValue,
+        },
+        duration: performance.now() - startedAt,
+      })
+
+      return countValue
+    } catch (error) {
+      logger.error({
+        message: 'Get likes count failed',
+        metadata: {
+          postId,
+        },
+        error,
+        duration: performance.now() - startedAt,
+      })
+
+      throw error
+    }
   },
 
   hasUserLiked: async (postId: string, userId: string) => {
@@ -267,39 +361,106 @@ export const engagementService = {
   },
 
   createComment: async (data: CreateCommentBodySchema, userId: string) => {
-    await assertPublishedPost(data.postId)
+    const startedAt = performance.now()
 
-    if (data.parentId) {
-      const parentComment = await db
-        .select({
-          id: commentTable.id,
-          postId: commentTable.postId,
-        })
-        .from(commentTable)
-        .where(eq(commentTable.id, data.parentId))
-        .limit(1)
-        .then((rows) => rows[0])
-
-      if (!parentComment) throw new ParentCommentNotFoundError()
-      if (parentComment.postId !== data.postId) throw new InvalidCommentParentError()
-    }
-
-    const [comment] = await db
-      .insert(commentTable)
-      .values({
+    logger.info({
+      message: 'Creating comment',
+      metadata: {
         postId: data.postId,
         userId,
-        content: data.content,
         parentId: data.parentId ?? null,
+      },
+    })
+
+    try {
+      await assertPublishedPost(data.postId)
+
+      if (data.parentId) {
+        const parentComment = await db
+          .select({
+            id: commentTable.id,
+            postId: commentTable.postId,
+          })
+          .from(commentTable)
+          .where(eq(commentTable.id, data.parentId))
+          .limit(1)
+          .then((rows) => rows[0])
+
+        if (!parentComment) {
+          logger.warn({
+            message: 'Parent comment not found',
+            metadata: {
+              postId: data.postId,
+              parentId: data.parentId,
+            },
+          })
+          throw new ParentCommentNotFoundError()
+        }
+        if (parentComment.postId !== data.postId) {
+          logger.warn({
+            message: 'Invalid comment parent detected',
+            metadata: {
+              postId: data.postId,
+              parentId: data.parentId,
+              parentPostId: parentComment.postId,
+            },
+          })
+          throw new InvalidCommentParentError()
+        }
+      }
+
+      const [comment] = await db
+        .insert(commentTable)
+        .values({
+          postId: data.postId,
+          userId,
+          content: data.content,
+          parentId: data.parentId ?? null,
+        })
+        .returning()
+
+      if (!comment) throw new Error('Failed to create comment')
+
+      logger.info({
+        message: 'Comment created successfully',
+        metadata: {
+          commentId: comment.id,
+          postId: data.postId,
+          userId,
+          parentId: comment.parentId,
+        },
+        duration: performance.now() - startedAt,
       })
-      .returning()
 
-    if (!comment) throw new Error('Failed to create comment')
+      return comment
+    } catch (error) {
+      logger.error({
+        message: 'Create comment failed',
+        metadata: {
+          postId: data.postId,
+          userId,
+          parentId: data.parentId ?? null,
+        },
+        error,
+        duration: performance.now() - startedAt,
+      })
 
-    return comment
+      throw error
+    }
   },
 
   getCommentsByPost: async (postId: string, page: number, limit: number) => {
+    const startedAt = performance.now()
+
+    logger.debug({
+      message: 'Fetching comments by post',
+      metadata: {
+        postId,
+        page,
+        limit,
+      },
+    })
+
     await assertPublishedPost(postId)
 
     const rootRows = await db
@@ -362,12 +523,26 @@ export const engagementService = {
       currentParentIds = mappedDescendants.map((comment) => comment.id)
     }
 
-    return {
+    const result = {
       items: buildCommentTree(rootComments, replyRows),
       total: toNumber(totalRootsResult?.count),
       page,
       limit,
     }
+
+    logger.info({
+      message: 'Comments fetched successfully',
+      metadata: {
+        postId,
+        page,
+        limit,
+        total: result.total,
+        rootCount: result.items.length,
+      },
+      duration: performance.now() - startedAt,
+    })
+
+    return result
   },
 
   updateComment: async (
@@ -375,6 +550,8 @@ export const engagementService = {
     data: UpdateCommentBodySchema,
     userId: string
   ) => {
+    const startedAt = performance.now()
+
     const comment = await db
       .select({
         id: commentTable.id,
@@ -386,11 +563,30 @@ export const engagementService = {
       .limit(1)
       .then((rows) => rows[0])
 
-    if (!comment) return null
+    if (!comment) {
+      logger.warn({
+        message: 'Comment update target not found',
+        metadata: {
+          commentId,
+          userId,
+        },
+      })
+      return null
+    }
 
     await assertPublishedPost(comment.postId)
 
-    if (comment.userId !== userId) return null
+    if (comment.userId !== userId) {
+      logger.warn({
+        message: 'Comment update unauthorized',
+        metadata: {
+          commentId,
+          userId,
+          ownerId: comment.userId,
+        },
+      })
+      return null
+    }
 
     const [updated] = await db
       .update(commentTable)
@@ -401,10 +597,21 @@ export const engagementService = {
       .where(eq(commentTable.id, commentId))
       .returning()
 
+    logger.info({
+      message: 'Comment updated successfully',
+      metadata: {
+        commentId,
+        userId,
+      },
+      duration: performance.now() - startedAt,
+    })
+
     return updated
   },
 
   deleteComment: async (commentId: string, userId: string) => {
+    const startedAt = performance.now()
+
     const comment = await db
       .select({
         id: commentTable.id,
@@ -416,13 +623,41 @@ export const engagementService = {
       .limit(1)
       .then((rows) => rows[0])
 
-    if (!comment) return null
+    if (!comment) {
+      logger.warn({
+        message: 'Comment delete target not found',
+        metadata: {
+          commentId,
+          userId,
+        },
+      })
+      return null
+    }
 
     await assertPublishedPost(comment.postId)
 
-    if (comment.userId !== userId) return null
+    if (comment.userId !== userId) {
+      logger.warn({
+        message: 'Comment delete unauthorized',
+        metadata: {
+          commentId,
+          userId,
+          ownerId: comment.userId,
+        },
+      })
+      return null
+    }
 
     await db.delete(commentTable).where(eq(commentTable.id, commentId))
+
+    logger.info({
+      message: 'Comment deleted successfully',
+      metadata: {
+        commentId,
+        userId,
+      },
+      duration: performance.now() - startedAt,
+    })
 
     return { deleted: true }
   },
@@ -440,12 +675,24 @@ export const engagementService = {
   },
 
   trackView: async (postId: string, userId?: string, viewerIpHash?: string) => {
+    const startedAt = performance.now()
+
     await assertPublishedPost(postId)
 
     await db.insert(viewTable).values({
       postId,
       userId: userId ?? null,
       viewerIpHash: viewerIpHash ?? null,
+    })
+
+    logger.debug({
+      message: 'Post view tracked',
+      metadata: {
+        postId,
+        userId: userId ?? null,
+        viewerIpHash: viewerIpHash ?? null,
+      },
+      duration: performance.now() - startedAt,
     })
   },
 

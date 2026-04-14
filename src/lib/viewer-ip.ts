@@ -1,8 +1,10 @@
 import { createHmac } from 'node:crypto'
 
 import { env } from '#/env'
+import { createServiceLogger } from '#/lib/logger'
 
 const VIEWER_IP_HASH_VERSION = 'v1'
+const logger = createServiceLogger('viewerIp')
 
 const getViewerIpHashSalt = () => env.VIEWER_IP_HASH_SALT ?? env.BETTER_AUTH_SECRET
 
@@ -20,5 +22,15 @@ export const hashViewerIp = (viewerIp: string) => {
     .update(normalizedViewerIp)
     .digest('hex')
 
-  return `${VIEWER_IP_HASH_VERSION}:${digest}`
+  const value = `${VIEWER_IP_HASH_VERSION}:${digest}`
+
+  logger.debug({
+    message: 'Viewer IP hashed',
+    metadata: {
+      version: VIEWER_IP_HASH_VERSION,
+      viewerIpHash: value,
+    },
+  })
+
+  return value
 }

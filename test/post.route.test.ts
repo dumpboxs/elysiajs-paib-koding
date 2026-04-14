@@ -1,14 +1,18 @@
+import { Writable } from 'node:stream'
+
 import { describe, expect, it } from 'bun:test'
 import { openapi } from '@elysiajs/openapi'
 import { Elysia } from 'elysia'
 import { z } from 'zod'
 
+import { createLogger } from '#/lib/logger'
 import {
   createOpenApiConfig,
   OPENAPI_DOCS_PATH,
   OPENAPI_INFO,
 } from '#/lib/openapi'
 import { apiErrorPlugin } from '#/plugins/api-error.plugin'
+import { createRequestLoggerPlugin } from '#/plugins/request-logger.plugin'
 import {
   createPostRoutes,
   type CreatePostRoutesDeps,
@@ -115,6 +119,35 @@ const getPostsRequest = (query?: URLSearchParams) =>
 
 const getPostByIdRequest = (id: string) =>
   new Request(`http://localhost/api/posts/${id}`)
+
+const createLogCapture = () => {
+  const chunks: string[] = []
+  const destination = new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(String(chunk))
+      callback()
+    },
+  })
+
+  return {
+    logger: createLogger({
+      destination,
+      enabled: true,
+      format: 'json',
+      level: 'trace',
+    }),
+    async flush() {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    },
+    records() {
+      return chunks
+        .join('')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+    },
+  }
+}
 
 describe('post.route response contract', () => {
   it('returns 200 on get posts with cursor pagination payload', async () => {
@@ -443,5 +476,48 @@ describe('post.route response contract', () => {
       tags: ['Posts'],
       operationId: 'getPostById',
     })
+  })
+
+  it('emits request lifecycle logs for post endpoints with x-request-id propagation', async () => {
+    const capture = createLogCapture()
+    const app = new Elysia()
+      .use(
+        createRequestLoggerPlugin({
+          logger: capture.logger.child('http'),
+        })
+      )
+      .use(buildApp())
+
+    const response = await app.handle(
+      new Request('http://localhost/api/posts?limit=10', {
+        headers: {
+          'x-request-id': 'req-post-route',
+        },
+      })
+    )
+
+    await capture.flush()
+
+    const records = capture.records()
+    const requestStart = records.find(
+      (record) =>
+        record['message'] === 'HTTP Request Started' &&
+        ((record['metadata'] as Record<string, unknown>)['path'] as string) ===
+          '/api/posts'
+    )
+    const requestCompleted = records.find(
+      (record) =>
+        record['message'] === 'HTTP Request Completed' &&
+        ((record['metadata'] as Record<string, unknown>)['path'] as string) ===
+          '/api/posts'
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-request-id')).toBe('req-post-route')
+    expect(requestStart).toBeDefined()
+    expect(requestCompleted).toBeDefined()
+    expect(
+      (requestStart?.['context'] as Record<string, unknown>)['requestId']
+    ).toBe('req-post-route')
   })
 })
