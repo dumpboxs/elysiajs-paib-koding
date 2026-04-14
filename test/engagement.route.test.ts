@@ -1,11 +1,15 @@
+import { Writable } from 'node:stream'
+
 import { describe, expect, it } from 'bun:test'
 import { openapi } from '@elysiajs/openapi'
 import { Elysia } from 'elysia'
 import { z } from 'zod'
 
+import { createLogger } from '#/lib/logger'
 import { createOpenApiConfig, OPENAPI_DOCS_PATH } from '#/lib/openapi'
 import { hashViewerIp } from '#/lib/viewer-ip'
 import { apiErrorPlugin } from '#/plugins/api-error.plugin'
+import { createRequestLoggerPlugin } from '#/plugins/request-logger.plugin'
 import {
   createEngagementRoutes,
   type CreateEngagementRoutesDeps,
@@ -186,6 +190,35 @@ const putJsonRequest = (path: string, payload: unknown) =>
     },
     body: JSON.stringify(payload),
   })
+
+const createLogCapture = () => {
+  const chunks: string[] = []
+  const destination = new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(String(chunk))
+      callback()
+    },
+  })
+
+  return {
+    logger: createLogger({
+      destination,
+      enabled: true,
+      format: 'json',
+      level: 'trace',
+    }),
+    async flush() {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    },
+    records() {
+      return chunks
+        .join('')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+    },
+  }
+}
 
 describe('engagement.route response contract', () => {
   it('toggles like state across repeated requests and exposes updated count', async () => {
@@ -548,5 +581,48 @@ describe('engagement.route response contract', () => {
         '500',
       ])
     )
+  })
+
+  it('emits request lifecycle logs for engagement endpoints with x-request-id propagation', async () => {
+    const capture = createLogCapture()
+    const app = new Elysia()
+      .use(
+        createRequestLoggerPlugin({
+          logger: capture.logger.child('http'),
+        })
+      )
+      .use(buildApp())
+
+    const response = await app.handle(
+      new Request(`http://localhost/api/engagement/likes/count?postId=${postId}`, {
+        headers: {
+          'x-request-id': 'req-engagement-route',
+        },
+      })
+    )
+
+    await capture.flush()
+
+    const records = capture.records()
+    const requestStart = records.find(
+      (record) =>
+        record['message'] === 'HTTP Request Started' &&
+        ((record['metadata'] as Record<string, unknown>)['path'] as string) ===
+          '/api/engagement/likes/count'
+    )
+    const requestCompleted = records.find(
+      (record) =>
+        record['message'] === 'HTTP Request Completed' &&
+        ((record['metadata'] as Record<string, unknown>)['path'] as string) ===
+          '/api/engagement/likes/count'
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-request-id')).toBe('req-engagement-route')
+    expect(requestStart).toBeDefined()
+    expect(requestCompleted).toBeDefined()
+    expect(
+      (requestCompleted?.['context'] as Record<string, unknown>)['requestId']
+    ).toBe('req-engagement-route')
   })
 })

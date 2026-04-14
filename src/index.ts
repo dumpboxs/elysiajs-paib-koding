@@ -4,10 +4,14 @@ import { cors } from '@elysiajs/cors'
 
 import { env } from '#/env'
 import { auth, OpenAPI } from '#/lib/auth'
+import { createServiceLogger } from '#/lib/logger'
 import { createOpenApiConfig } from '#/lib/openapi'
 import { apiErrorPlugin } from '#/plugins/api-error.plugin'
+import { requestLoggerPlugin } from '#/plugins/request-logger.plugin'
 import { engagementRoutes } from '#/routes/engagement.route'
 import { postRoutes } from '#/routes/post.route'
+
+const logger = createServiceLogger('server')
 
 const app = new Elysia()
   .use(
@@ -29,12 +33,17 @@ const app = new Elysia()
     )
   )
   .use(apiErrorPlugin)
+  .use(requestLoggerPlugin)
   .mount('/auth', auth.handler)
   .use(postRoutes)
   .use(engagementRoutes)
   .get('/', () => 'Hello Elysia')
   .listen(env.PORT)
 
-console.log(
-  `🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`
-)
+logger.info({
+  message: 'HTTP server started',
+  metadata: {
+    hostname: app.server?.hostname,
+    port: app.server?.port,
+  },
+})

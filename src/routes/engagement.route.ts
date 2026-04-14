@@ -1,7 +1,8 @@
 import Elysia, { status as elysiaStatus } from 'elysia'
 import { z } from 'zod'
 
-import { auth } from '#/lib/auth'
+import { getRequestAuthSession } from '#/lib/auth'
+import { createServiceLogger } from '#/lib/logger'
 import { hashViewerIp } from '#/lib/viewer-ip'
 import {
   ApiSuccessSchema,
@@ -27,6 +28,8 @@ import {
   PostNotFoundError,
   type CommentTreeNode,
 } from '#/services/engagement.service'
+
+const logger = createServiceLogger('engagementRoutes')
 
 type AuthenticatedUser = {
   id: string
@@ -152,9 +155,7 @@ const defaultDeps: EngagementRoutesDeps = {
     engagementService.trackView(postId, userId, viewerIpHash),
   getViewsCount: (postId) => engagementService.getViewsCount(postId),
   getSession: async (request) => {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    })
+    const session = await getRequestAuthSession(request)
 
     if (!session) return null
 
@@ -253,6 +254,13 @@ const trackViewResponseSchema = ApiSuccessSchema(
 
 const toRouteErrorResponse = (error: unknown) => {
   if (error instanceof PostNotFoundError) {
+    logger.warn({
+      message: 'Mapped engagement error response',
+      metadata: {
+        errorType: error.name,
+      },
+      error,
+    })
     return elysiaStatus(
       404,
       createErrorResponse(404, {
@@ -262,6 +270,13 @@ const toRouteErrorResponse = (error: unknown) => {
   }
 
   if (error instanceof ParentCommentNotFoundError) {
+    logger.warn({
+      message: 'Mapped engagement error response',
+      metadata: {
+        errorType: error.name,
+      },
+      error,
+    })
     return elysiaStatus(
       404,
       createErrorResponse(404, {
@@ -271,6 +286,13 @@ const toRouteErrorResponse = (error: unknown) => {
   }
 
   if (error instanceof InvalidCommentParentError) {
+    logger.warn({
+      message: 'Mapped engagement error response',
+      metadata: {
+        errorType: error.name,
+      },
+      error,
+    })
     return elysiaStatus(
       400,
       createErrorResponse(400, {
@@ -295,7 +317,19 @@ export const createEngagementRoutes = (
       async resolve({ request }) {
         const session = await runtimeDeps.getSession(request)
 
-        if (!session) return
+        if (!session) {
+          logger.debug({
+            message: 'Engagement optional auth resolved anonymously',
+          })
+          return
+        }
+
+        logger.debug({
+          message: 'Engagement optional auth resolved authenticated user',
+          metadata: {
+            userId: session.user.id,
+          },
+        })
 
         return {
           session: session.session,
@@ -308,7 +342,19 @@ export const createEngagementRoutes = (
       async resolve({ request }) {
         const session = await runtimeDeps.getSession(request)
 
-        if (!session) return elysiaStatus(401, createErrorResponse(401))
+        if (!session) {
+          logger.warn({
+            message: 'Engagement required auth failed',
+          })
+          return elysiaStatus(401, createErrorResponse(401))
+        }
+
+        logger.debug({
+          message: 'Engagement required auth resolved authenticated user',
+          metadata: {
+            userId: session.user.id,
+          },
+        })
 
         return {
           session: session.session,
@@ -323,6 +369,14 @@ export const createEngagementRoutes = (
     .post(
       '/likes',
       async ({ body, user }) => {
+        logger.debug({
+          message: 'Processing toggle like request',
+          metadata: {
+            postId: body.postId,
+            userId: user.id,
+          },
+        })
+
         try {
           const result = await runtimeDeps.toggleLike(body, user.id)
 
@@ -353,6 +407,13 @@ export const createEngagementRoutes = (
     .get(
       '/likes/count',
       async ({ query }) => {
+        logger.debug({
+          message: 'Processing get likes count request',
+          metadata: {
+            postId: query.postId,
+          },
+        })
+
         try {
           const count = await runtimeDeps.getLikesCount(query.postId)
 
@@ -383,6 +444,15 @@ export const createEngagementRoutes = (
     .get(
       '/comments',
       async ({ query }) => {
+        logger.debug({
+          message: 'Processing get comments request',
+          metadata: {
+            postId: query.postId,
+            page: query.page,
+            limit: query.limit,
+          },
+        })
+
         try {
           const result = await runtimeDeps.getCommentsByPost(
             query.postId,
@@ -421,6 +491,15 @@ export const createEngagementRoutes = (
     .post(
       '/comments',
       async ({ body, user }) => {
+        logger.debug({
+          message: 'Processing create comment request',
+          metadata: {
+            postId: body.postId,
+            parentId: body.parentId ?? null,
+            userId: user.id,
+          },
+        })
+
         try {
           const comment = await runtimeDeps.createComment(body, user.id)
           if (!comment) return elysiaStatus(500, createErrorResponse(500))
@@ -460,6 +539,14 @@ export const createEngagementRoutes = (
     .put(
       '/comments/:id',
       async ({ params, body, user }) => {
+        logger.debug({
+          message: 'Processing update comment request',
+          metadata: {
+            commentId: params.id,
+            userId: user.id,
+          },
+        })
+
         try {
           const comment = await runtimeDeps.updateComment(
             params.id,
@@ -510,6 +597,14 @@ export const createEngagementRoutes = (
     .delete(
       '/comments/:id',
       async ({ params, user }) => {
+        logger.debug({
+          message: 'Processing delete comment request',
+          metadata: {
+            commentId: params.id,
+            userId: user.id,
+          },
+        })
+
         try {
           const result = await runtimeDeps.deleteComment(params.id, user.id)
 
@@ -549,6 +644,13 @@ export const createEngagementRoutes = (
     .get(
       '/comments/count',
       async ({ query }) => {
+        logger.debug({
+          message: 'Processing get comments count request',
+          metadata: {
+            postId: query.postId,
+          },
+        })
+
         try {
           const count = await runtimeDeps.getCommentsCount(query.postId)
 
@@ -582,7 +684,22 @@ export const createEngagementRoutes = (
       async ({ body, request, user }) => {
         try {
           const clientIp = runtimeDeps.getClientIp(request)
+          logger.debug({
+            message: 'Resolved client IP for view tracking',
+            metadata: {
+              postId: body.postId,
+              clientIp: clientIp ?? null,
+            },
+          })
           const viewerIpHash = clientIp ? hashViewerIp(clientIp) : undefined
+          logger.debug({
+            message: 'Resolved view tracking session state',
+            metadata: {
+              postId: body.postId,
+              session: user ? 'authenticated' : 'anonymous',
+              userId: user?.id,
+            },
+          })
 
           if (!user?.id && !viewerIpHash) {
             return elysiaStatus(
@@ -625,6 +742,13 @@ export const createEngagementRoutes = (
     .get(
       '/views/count',
       async ({ query }) => {
+        logger.debug({
+          message: 'Processing get views count request',
+          metadata: {
+            postId: query.postId,
+          },
+        })
+
         try {
           const count = await runtimeDeps.getViewsCount(query.postId)
 
