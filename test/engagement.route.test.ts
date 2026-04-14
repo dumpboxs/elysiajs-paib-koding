@@ -3,10 +3,7 @@ import { openapi } from '@elysiajs/openapi'
 import { Elysia } from 'elysia'
 import { z } from 'zod'
 
-import {
-  createOpenApiConfig,
-  OPENAPI_DOCS_PATH,
-} from '#/lib/openapi'
+import { createOpenApiConfig, OPENAPI_DOCS_PATH } from '#/lib/openapi'
 import { hashViewerIp } from '#/lib/viewer-ip'
 import { apiErrorPlugin } from '#/plugins/api-error.plugin'
 import {
@@ -205,7 +202,9 @@ describe('engagement.route response contract', () => {
     const secondBody = (await secondResponse.json()) as Record<string, unknown>
 
     const countResponse = await app.handle(
-      new Request(`http://localhost/api/engagement/likes/count?postId=${postId}`)
+      new Request(
+        `http://localhost/api/engagement/likes/count?postId=${postId}`
+      )
     )
     const countBody = (await countResponse.json()) as Record<string, unknown>
 
@@ -215,7 +214,9 @@ describe('engagement.route response contract', () => {
 
     expect(secondResponse.status).toBe(200)
     expect((secondBody['data'] as Record<string, unknown>)['liked']).toBe(false)
-    expect((secondBody['data'] as Record<string, unknown>)['likesCount']).toBe(0)
+    expect((secondBody['data'] as Record<string, unknown>)['likesCount']).toBe(
+      0
+    )
 
     expect(countResponse.status).toBe(200)
     expect((countBody['data'] as Record<string, unknown>)['count']).toBe(0)
@@ -360,7 +361,10 @@ describe('engagement.route response contract', () => {
         `http://localhost/api/engagement/comments?postId=${postId}&page=1&limit=20`
       )
     )
-    const commentsBody = (await commentsResponse.json()) as Record<string, unknown>
+    const commentsBody = (await commentsResponse.json()) as Record<
+      string,
+      unknown
+    >
 
     const countResponse = await app.handle(
       new Request(
@@ -372,8 +376,12 @@ describe('engagement.route response contract', () => {
     const data = commentsBody['data'] as Record<string, unknown>
     const items = data['items'] as Array<Record<string, unknown>>
     const firstRoot = items[0]!
-    const firstReply = (firstRoot['replies'] as Array<Record<string, unknown>>)[0]!
-    const nestedReply = (firstReply['replies'] as Array<Record<string, unknown>>)[0]!
+    const firstReply = (
+      firstRoot['replies'] as Array<Record<string, unknown>>
+    )[0]!
+    const nestedReply = (
+      firstReply['replies'] as Array<Record<string, unknown>>
+    )[0]!
 
     expect(commentsResponse.status).toBe(200)
     expect(data['total']).toBe(1)
@@ -477,7 +485,9 @@ describe('engagement.route response contract', () => {
     })
 
     const response = await app.handle(
-      new Request(`http://localhost/api/engagement/likes/count?postId=${postId}`)
+      new Request(
+        `http://localhost/api/engagement/likes/count?postId=${postId}`
+      )
     )
     const body = (await response.json()) as Record<string, unknown>
 
@@ -515,9 +525,9 @@ describe('engagement.route response contract', () => {
     expect(commentPath?.post?.operationId).toBe('createComment')
     expect(commentItemPath?.put?.operationId).toBe('updateComment')
     expect(commentItemPath?.delete?.operationId).toBe('deleteComment')
-    expect(spec.paths?.['/api/engagement/comments/count']?.get?.operationId).toBe(
-      'getCommentsCount'
-    )
+    expect(
+      spec.paths?.['/api/engagement/comments/count']?.get?.operationId
+    ).toBe('getCommentsCount')
     expect(spec.paths?.['/api/engagement/views']?.post?.operationId).toBe(
       'trackView'
     )
@@ -525,10 +535,18 @@ describe('engagement.route response contract', () => {
       'getViewsCount'
     )
 
-    expect(
-      Object.keys(commentPath?.get?.responses ?? {})
-    ).toEqual(
-      expect.arrayContaining(['200', '400', '401', '403', '404', '422', '429', '500'])
+    expect(Object.keys(commentPath?.get?.responses ?? {})).toEqual(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      expect.arrayContaining([
+        '200',
+        '400',
+        '401',
+        '403',
+        '404',
+        '422',
+        '429',
+        '500',
+      ])
     )
   })
 })

@@ -1,17 +1,17 @@
-name: elysiajs-paib-koding
+name: marvticle-api
 
 services:
   postgres:
     image: postgres
-    container_name: elysiajs-paib-koding-postgres
+    container_name: marvticle-api-postgres
     environment:
-      POSTGRES_DB: elysiajs-paib-koding
+      POSTGRES_DB: marvticle-api
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
     ports:
       - '5432:5432'
     volumes:
-      - elysiajs-paib-koding_postgres_data:/var/lib/postgresql
+      - marvticle-api_postgres_data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 10s
@@ -20,4 +20,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  elysiajs-paib-koding_postgres_data:
+  marvticle-api_postgres_data:

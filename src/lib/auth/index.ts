@@ -62,6 +62,7 @@ export const OpenAPI = {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
     getSchema().then(({ paths }) => {
       const schemaPaths = paths ?? {}
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const reference: Record<string, unknown> = Object.create(null)
 
       for (const path of Object.keys(schemaPaths)) {
