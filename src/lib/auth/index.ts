@@ -44,19 +44,21 @@ const asString = (value: unknown) =>
 
 const getAuthEventName = (path: string | undefined) => {
   if (!path) return 'auth'
-  if (path.startsWith('/sign-in')) return 'signIn'
-  if (path.startsWith('/sign-out')) return 'signOut'
-  if (path.startsWith('/sign-up')) return 'signUp'
-  if (path.startsWith('/verify-email')) return 'verifyEmail'
-  if (path.startsWith('/change-password')) return 'changePassword'
-  if (path.startsWith('/reset-password')) return 'resetPassword'
-  if (path.startsWith('/get-session')) return 'session'
-  if (path.startsWith('/update-session')) return 'session'
-  if (path.startsWith('/list-sessions')) return 'session'
-  if (path.startsWith('/revoke-session')) return 'session'
-  if (path.startsWith('/revoke-sessions')) return 'session'
-  if (path.startsWith('/revoke-other-sessions')) return 'session'
-  if (path.startsWith('/callback')) return 'oauth'
+  const normalizedPath = path.replace(/^\/auth\/api/, '').replace(/^\/api/, '')
+
+  if (normalizedPath.startsWith('/sign-in')) return 'signIn'
+  if (normalizedPath.startsWith('/sign-out')) return 'signOut'
+  if (normalizedPath.startsWith('/sign-up')) return 'signUp'
+  if (normalizedPath.startsWith('/verify-email')) return 'verifyEmail'
+  if (normalizedPath.startsWith('/change-password')) return 'changePassword'
+  if (normalizedPath.startsWith('/reset-password')) return 'resetPassword'
+  if (normalizedPath.startsWith('/get-session')) return 'session'
+  if (normalizedPath.startsWith('/update-session')) return 'session'
+  if (normalizedPath.startsWith('/list-sessions')) return 'session'
+  if (normalizedPath.startsWith('/revoke-session')) return 'session'
+  if (normalizedPath.startsWith('/revoke-sessions')) return 'session'
+  if (normalizedPath.startsWith('/revoke-other-sessions')) return 'session'
+  if (normalizedPath.startsWith('/callback')) return 'oauth'
 
   return 'auth'
 }
@@ -329,16 +331,18 @@ export const getRequestAuthSession = async (request: Request) => {
 
     return session
   } catch (error) {
-    authLogger.warn({
-      message: 'Auth session validation failed',
+    if (env.LOG_INCLUDE_AUTH_EVENTS) {
+      authLogger.warn({
+        message: 'Auth session validation failed',
         metadata: {
           event: 'session',
           action: 'validate',
           ipAddress: getHashedClientIp(request.headers),
           userAgent: request.headers.get('user-agent') ?? undefined,
         },
-      error,
-    })
+        error,
+      })
+    }
 
     throw error
   }
