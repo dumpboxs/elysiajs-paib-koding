@@ -7,6 +7,9 @@ const booleanFlagSchema = z.preprocess(
   z.enum(['true', 'false']).transform((value) => value === 'true')
 )
 
+const defaultLogFormat =
+  process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
+
 export const env = createEnv({
   server: {
     DATABASE_URL: z.url(),
@@ -17,7 +20,7 @@ export const env = createEnv({
     LOG_LEVEL: z
       .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
       .default('info'),
-    LOG_FORMAT: z.enum(['json', 'pretty']).default('pretty'),
+    LOG_FORMAT: z.enum(['json', 'pretty']).default(defaultLogFormat),
     LOG_INCLUDE_DB_QUERIES: booleanFlagSchema.default(false),
     LOG_INCLUDE_AUTH_EVENTS: booleanFlagSchema.default(true),
     LOG_INCLUDE_REQUEST_BODY: booleanFlagSchema.default(false),

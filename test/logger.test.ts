@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { instrumentPgPoolQueries } from '#/db/query-logger'
 import { enterRequestContext } from '#/lib/logger/context'
 import { createLogger } from '#/lib/logger/index'
+import { hashViewerIp } from '#/lib/viewer-ip'
 import { createApiErrorPlugin } from '#/plugins/api-error.plugin'
 import { createRequestLoggerPlugin } from '#/plugins/request-logger.plugin'
 
@@ -167,6 +168,7 @@ describe('logger infrastructure', () => {
         headers: {
           'content-type': 'application/json',
           authorization: 'Bearer token',
+          'x-forwarded-for': '203.0.113.10, 10.0.0.1',
           'x-request-id': 'req-request-logger',
         },
         body: JSON.stringify({
@@ -208,6 +210,9 @@ describe('logger infrastructure', () => {
         unknown
       >)['token']
     ).toBe('[REDACTED]')
+    expect(
+      (requestStart?.['metadata'] as Record<string, unknown>)['clientIp']
+    ).toBe(hashViewerIp('203.0.113.10'))
     expect(
       (
         (apiError?.['metadata'] as Record<string, unknown>)['validationErrors'] as Record<

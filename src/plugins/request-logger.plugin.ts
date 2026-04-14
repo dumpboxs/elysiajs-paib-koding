@@ -19,6 +19,7 @@ import {
   estimatePayloadSize,
   toSerializableUrl,
 } from '#/lib/logger/serialization'
+import { hashViewerIp } from '#/lib/viewer-ip'
 
 type CreateRequestLoggerPluginOptions = {
   logger?: AppLogger
@@ -87,7 +88,7 @@ export const createRequestLoggerPlugin = (
           path: requestUrl.path,
           query: requestUrl.query,
           headers: redactHeaders(request.headers, sensitiveFields),
-          clientIp: getClientIp(request),
+          clientIp: hashViewerIp(getClientIp(request) ?? ''),
           userAgent: request.headers.get('user-agent') ?? undefined,
         },
       })

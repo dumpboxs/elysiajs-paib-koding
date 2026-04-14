@@ -18,6 +18,7 @@ import {
   parseSensitiveFieldConfig,
   sanitizeForLogging,
 } from '#/lib/logger/redaction'
+import { hashViewerIp } from '#/lib/viewer-ip'
 
 const authLogger = createServiceLogger('auth')
 const sensitiveFields = parseSensitiveFieldConfig(env.LOG_SENSITIVE_FIELDS)
@@ -34,6 +35,9 @@ const getClientIp = (headers: Headers | undefined) => {
 
   return undefined
 }
+
+const getHashedClientIp = (headers: Headers | undefined) =>
+  hashViewerIp(getClientIp(headers) ?? '')
 
 const asString = (value: unknown) =>
   typeof value === 'string' && value.trim().length > 0 ? value : undefined
@@ -100,7 +104,7 @@ const createAuthLoggingPlugin = () => ({
               event,
               provider: getAuthProvider(ctx.path, ctx.body),
               path: ctx.path,
-              ipAddress: getClientIp(ctx.headers),
+              ipAddress: getHashedClientIp(ctx.headers),
               userAgent: ctx.headers?.get('user-agent') ?? undefined,
               ...(env.LOG_INCLUDE_REQUEST_BODY
                 ? {
@@ -127,7 +131,7 @@ const createAuthLoggingPlugin = () => ({
               event,
               provider: getAuthProvider(ctx.path, ctx.body),
               path: ctx.path,
-              ipAddress: getClientIp(ctx.headers),
+              ipAddress: getHashedClientIp(ctx.headers),
               userAgent: ctx.headers?.get('user-agent') ?? undefined,
               userId: authState.userId,
               sessionId: authState.sessionId,
@@ -317,7 +321,7 @@ export const getRequestAuthSession = async (request: Request) => {
           authenticated: Boolean(session),
           userId: session?.user.id,
           sessionId: session?.session.id,
-          ipAddress: getClientIp(request.headers),
+          ipAddress: getHashedClientIp(request.headers),
           userAgent: request.headers.get('user-agent') ?? undefined,
         },
       })
@@ -327,12 +331,12 @@ export const getRequestAuthSession = async (request: Request) => {
   } catch (error) {
     authLogger.warn({
       message: 'Auth session validation failed',
-      metadata: {
-        event: 'session',
-        action: 'validate',
-        ipAddress: getClientIp(request.headers),
-        userAgent: request.headers.get('user-agent') ?? undefined,
-      },
+        metadata: {
+          event: 'session',
+          action: 'validate',
+          ipAddress: getHashedClientIp(request.headers),
+          userAgent: request.headers.get('user-agent') ?? undefined,
+        },
       error,
     })
 
