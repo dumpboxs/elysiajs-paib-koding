@@ -306,6 +306,7 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 3,
   },
+  trustedOrigins: [env.CORS_ORIGIN],
 })
 
 export const getRequestAuthSession = async (request: Request) => {
