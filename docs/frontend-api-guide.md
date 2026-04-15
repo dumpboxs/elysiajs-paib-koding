@@ -367,6 +367,13 @@ File: `src/features/posts/posts.schemas.ts`
 ```ts
 import { z } from 'zod'
 
+export const postAuthorSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  username: z.string().nullable(),
+  image: z.string().nullable(),
+})
+
 export const postSchema = z.object({
   id: z.string().uuid(),
   title: z.string(),
@@ -374,7 +381,7 @@ export const postSchema = z.object({
   content: z.string(),
   coverImage: z.string().nullable(),
   published: z.boolean(),
-  authorId: z.string().uuid(),
+  author: postAuthorSchema,
   createdAt: z.string(),
   updatedAt: z.string().nullable(),
 })
@@ -404,6 +411,9 @@ Catatan:
 - bentuk `data` harus `{ items, nextCursor, hasMore }`
 - `GET /api/posts/:id` memakai `postSchema`
 - `POST /api/posts` menerima payload sesuai `createPostInputSchema`
+- response post sekarang mengembalikan objek `author`, bukan `authorId`
+- field author yang tersedia adalah `id`, `name`, `username`, dan `image`
+- `username` dan `image` sebaiknya diperlakukan nullable di frontend karena schema backend mengizinkan nilai `null`
 
 ### Engagement
 

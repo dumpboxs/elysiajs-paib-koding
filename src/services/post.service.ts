@@ -12,12 +12,30 @@ import {
 } from '#/schemas/post.schema'
 
 import { db } from '#/db'
-import { postTable } from '#/db/schemas'
+import { postTable, userTable } from '#/db/schemas'
 import { createServiceLogger } from '#/lib/logger'
 
 type CursorPayload = {
   createdAt: string
   id: string
+}
+
+type PostRecord = typeof postTable.$inferSelect
+
+type PostAuthor = {
+  id: string
+  name: string
+  username: string | null
+  image: string | null
+}
+
+type PostWithAuthor = PostRecord & {
+  author: PostAuthor
+}
+
+type PostWithAuthorRow = {
+  post: PostRecord
+  author: PostAuthor
 }
 
 const logger = createServiceLogger('postService')
@@ -55,6 +73,21 @@ const decodeCursor = (cursor: string): CursorPayload => {
 const toCursorDate = (value: Date | string) =>
   value instanceof Date ? value : new Date(value)
 
+const postWithAuthorSelection = {
+  post: postTable,
+  author: {
+    id: userTable.id,
+    name: userTable.name,
+    username: userTable.username,
+    image: userTable.image,
+  },
+} as const
+
+const mapPostWithAuthorRow = (row: PostWithAuthorRow): PostWithAuthor => ({
+  ...row.post,
+  author: row.author,
+})
+
 export class InvalidCursorError extends Error {
   constructor() {
     super('Invalid cursor')
@@ -76,7 +109,7 @@ export const postService = {
     })
 
     try {
-      const [post] = await db
+      const [insertedPost] = await db
         .insert(postTable)
         .values({
           ...data,
@@ -84,11 +117,33 @@ export const postService = {
         })
         .returning()
 
+      if (!insertedPost) {
+        logger.error({
+          message: 'Create post did not return inserted row',
+          metadata: {
+            authorId,
+            slug: data.slug,
+          },
+          duration: performance.now() - startedAt,
+        })
+
+        return null
+      }
+
+      const [row] = await db
+        .select(postWithAuthorSelection)
+        .from(postTable)
+        .innerJoin(userTable, eq(postTable.authorId, userTable.id))
+        .where(eq(postTable.id, insertedPost.id))
+        .limit(1)
+
+      const post = row ? mapPostWithAuthorRow(row) : null
+
       logger.info({
         message: 'Post created successfully',
         metadata: {
-          postId: post?.id,
-          slug: post?.slug,
+          postId: post?.id ?? insertedPost.id,
+          slug: post?.slug ?? insertedPost.slug,
         },
         duration: performance.now() - startedAt,
       })
@@ -120,9 +175,10 @@ export const postService = {
     })
 
     try {
-      const [post] = await db
-        .select()
+      const [row] = await db
+        .select(postWithAuthorSelection)
         .from(postTable)
+        .innerJoin(userTable, eq(postTable.authorId, userTable.id))
         .where(
           and(
             eq(postTable.id, id),
@@ -130,6 +186,8 @@ export const postService = {
           )
         )
         .limit(1)
+
+      const post = row ? mapPostWithAuthorRow(row) : null
 
       logger.info({
         message: post ? 'Published post found' : 'Published post not found',
@@ -198,14 +256,17 @@ export const postService = {
         : eq(postTable.published, true)
 
       const rows = await db
-        .select()
+        .select(postWithAuthorSelection)
         .from(postTable)
+        .innerJoin(userTable, eq(postTable.authorId, userTable.id))
         .where(whereCondition)
         .orderBy(desc(postTable.createdAt), desc(postTable.id))
         .limit(limit + 1)
 
       const hasMore = rows.length > limit
-      const items = hasMore ? rows.slice(0, limit) : rows
+      const items = (hasMore ? rows.slice(0, limit) : rows).map(
+        mapPostWithAuthorRow
+      )
       const lastItem = items.at(-1)
 
       const nextCursor = hasMore && lastItem

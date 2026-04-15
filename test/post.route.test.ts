@@ -27,6 +27,13 @@ const validRequestBody = {
   published: true,
 }
 
+const postAuthor = {
+  id: '550e8400-e29b-41d4-a716-446655440001',
+  name: 'Test Author',
+  username: 'test-author',
+  image: 'https://example.com/avatar.jpg',
+}
+
 const createdPost = {
   id: '550e8400-e29b-41d4-a716-446655440000',
   title: validRequestBody.title,
@@ -34,7 +41,8 @@ const createdPost = {
   content: validRequestBody.content,
   coverImage: validRequestBody.coverImage,
   published: validRequestBody.published,
-  authorId: '550e8400-e29b-41d4-a716-446655440001',
+  authorId: postAuthor.id,
+  author: postAuthor,
   createdAt: new Date('2026-04-11T00:00:00.000Z'),
   updatedAt: new Date('2026-04-11T00:00:00.000Z'),
 }
@@ -46,7 +54,7 @@ const buildApp = (deps: CreatePostRoutesDeps = {}) => {
     findPostById: async () => createdPost,
     getSession: async () => ({
       session: { id: 'session-id' },
-      user: { id: createdPost.authorId },
+      user: { id: createdPost.author.id },
     }),
     isRateLimited: async () => false,
     listPosts: async () => ({
@@ -169,6 +177,9 @@ describe('post.route response contract', () => {
     expect(Array.isArray(data['items'])).toBe(true)
     expect(data['nextCursor']).toBe('next-cursor-token')
     expect(data['hasMore']).toBe(true)
+    const firstItem = (data['items'] as Record<string, unknown>[])[0]
+    expect(firstItem?.['authorId']).toBeUndefined()
+    expect(firstItem?.['author']).toEqual(postAuthor)
   })
 
   it('returns 400 on invalid cursor for get posts', async () => {
@@ -203,6 +214,8 @@ describe('post.route response contract', () => {
 
     const data = body['data'] as Record<string, unknown>
     expect(data['id']).toBe(createdPost.id)
+    expect(data['authorId']).toBeUndefined()
+    expect(data['author']).toEqual(postAuthor)
   })
 
   it('returns 404 on get one post by id when not found', async () => {
@@ -226,9 +239,12 @@ describe('post.route response contract', () => {
     expect(response.status).toBe(200)
     expect(body['success']).toBe(true)
     expect(body['message']).toBe('Post created successfully')
-    expect((body['data'] as Record<string, unknown>)['createdAt']).toBe(
+    const data = body['data'] as Record<string, unknown>
+    expect(data['createdAt']).toBe(
       '2026-04-11T00:00:00.000Z'
     )
+    expect(data['authorId']).toBeUndefined()
+    expect(data['author']).toEqual(postAuthor)
   })
 
   it('returns 401 when session does not exist', async () => {

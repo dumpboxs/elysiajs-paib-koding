@@ -60,12 +60,21 @@ type PostRoutesDeps = {
 
 export type CreatePostRoutesDeps = Partial<PostRoutesDeps>
 
+const authorSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  username: z.string().nullable(),
+  image: z.string().nullable(),
+})
+
 const postResponseDataSchema = selectPostSchema
   .omit({
+    authorId: true,
     createdAt: true,
     updatedAt: true,
   })
   .extend({
+    author: authorSchema,
     createdAt: z.string(),
     updatedAt: z.string().nullable(),
   })
@@ -131,16 +140,27 @@ const toDateString = (value: unknown) => {
 
 const mapPostResponse = <
   T extends {
+    author: {
+      id: string
+      name: string
+      username: string | null
+      image: string | null
+    }
+    authorId?: unknown
     createdAt: unknown
     updatedAt: unknown
   },
 >(
   post: T
-) => ({
-  ...post,
-  createdAt: toDateString(post.createdAt),
-  updatedAt: post.updatedAt ? toDateString(post.updatedAt) : null,
-})
+) => {
+  const { authorId: _authorId, ...rest } = post
+
+  return {
+    ...rest,
+    createdAt: toDateString(post.createdAt),
+    updatedAt: post.updatedAt ? toDateString(post.updatedAt) : null,
+  }
+}
 
 /**
  * Post Routes
