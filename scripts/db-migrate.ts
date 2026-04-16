@@ -99,6 +99,27 @@ const constraintExists = async (
   return Boolean(result.rows[0]?.exists)
 }
 
+const indexExists = async (
+  client: Client,
+  table: string,
+  index: string
+) => {
+  const result = await client.query<{ exists: boolean }>(
+    `
+      select exists (
+        select 1
+        from pg_indexes
+        where schemaname = 'public'
+          and tablename = $1
+          and indexname = $2
+      ) as exists
+    `,
+    [table, index]
+  )
+
+  return Boolean(result.rows[0]?.exists)
+}
+
 const generatedColumnExpression = async (
   client: Client,
   table: string,
@@ -143,15 +164,23 @@ const detectLegacyBaselineIdx = async (client: Client) => {
   }
 
   if (await columnExists(client, 'posts', 'search_vector')) {
-    const expression = await generatedColumnExpression(
-      client,
-      'posts',
-      'search_vector'
-    )
+    const hasIndex = await indexExists(client, 'posts', 'idx_posts_search')
 
-    if (expression?.includes("'english'")) return 4
+    // Only advance baseline if BOTH column and index exist
+    if (hasIndex) {
+      const expression = await generatedColumnExpression(
+        client,
+        'posts',
+        'search_vector'
+      )
 
-    return 3
+      if (expression?.includes("'english'")) return 4
+
+      return 3
+    }
+
+    // Column exists but index is missing - don't advance baseline
+    // so the migration that creates the index will run
   }
   if (await columnExists(client, 'views', 'viewer_ip_hash')) return 2
   if (await constraintExists(client, 'views', 'view_actor_required_check')) {
