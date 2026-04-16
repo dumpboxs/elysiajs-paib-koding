@@ -42,6 +42,7 @@ const createdPost = {
   coverImage: validRequestBody.coverImage,
   published: validRequestBody.published,
   authorId: postAuthor.id,
+  searchVector: "'post':1A,3B 'title':2A 'content':4B",
   author: postAuthor,
   createdAt: new Date('2026-04-11T00:00:00.000Z'),
   updatedAt: new Date('2026-04-11T00:00:00.000Z'),
@@ -70,6 +71,11 @@ const buildApp = (deps: CreatePostRoutesDeps = {}) => {
     listPosts: async () => ({
       items: [createdPost],
       nextCursor: 'next-cursor-token',
+      hasMore: true,
+    }),
+    searchPosts: async () => ({
+      items: [createdPost],
+      nextCursor: 'next-search-cursor-token',
       hasMore: true,
     }),
     updatePost: async () => updatedPost,
@@ -134,6 +140,11 @@ const postRequest = (payload: unknown) =>
 const getPostsRequest = (query?: URLSearchParams) =>
   new Request(
     `http://localhost/api/posts${query ? `?${query.toString()}` : ''}`
+  )
+
+const searchPostsRequest = (query?: URLSearchParams) =>
+  new Request(
+    `http://localhost/api/posts/search${query ? `?${query.toString()}` : ''}`
   )
 
 const getPostByIdRequest = (id: string) =>
@@ -204,6 +215,7 @@ describe('post.route response contract', () => {
     expect(data['hasMore']).toBe(true)
     const firstItem = (data['items'] as Record<string, unknown>[])[0]
     expect(firstItem?.['authorId']).toBeUndefined()
+    expect(firstItem?.['searchVector']).toBeUndefined()
     expect(firstItem?.['author']).toEqual(postAuthor)
   })
 
@@ -228,6 +240,119 @@ describe('post.route response contract', () => {
     expect(body['message']).toBe('Invalid cursor')
   })
 
+  it('returns 200 on search posts with cursor pagination payload', async () => {
+    const app = buildApp()
+    const response = await app.handle(
+      searchPostsRequest(
+        new URLSearchParams({
+          q: 'post',
+          limit: '10',
+        })
+      )
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body['success']).toBe(true)
+    expect(body['message']).toBe('Posts fetched successfully')
+
+    const data = body['data'] as Record<string, unknown>
+    expect(Array.isArray(data['items'])).toBe(true)
+    expect(data['nextCursor']).toBe('next-search-cursor-token')
+    expect(data['hasMore']).toBe(true)
+    const firstItem = (data['items'] as Record<string, unknown>[])[0]
+    expect(firstItem?.['authorId']).toBeUndefined()
+    expect(firstItem?.['searchVector']).toBeUndefined()
+    expect(firstItem?.['author']).toEqual(postAuthor)
+  })
+
+  it('returns 200 on search posts with empty results', async () => {
+    const app = buildApp({
+      searchPosts: async () => ({
+        items: [],
+        nextCursor: null,
+        hasMore: false,
+      }),
+    })
+    const response = await app.handle(
+      searchPostsRequest(
+        new URLSearchParams({
+          q: 'missing',
+        })
+      )
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(200)
+    expect(body['success']).toBe(true)
+    expect(body['message']).toBe('Posts fetched successfully')
+    expect(body['data']).toEqual({
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+    })
+  })
+
+  it('returns 400 on invalid cursor for search posts', async () => {
+    const app = buildApp({
+      searchPosts: async () => {
+        throw new InvalidCursorError()
+      },
+    })
+    const response = await app.handle(
+      searchPostsRequest(
+        new URLSearchParams({
+          q: 'post',
+          cursor: 'invalid-cursor',
+        })
+      )
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(400)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('BAD_REQUEST')
+    expect(body['message']).toBe('Invalid cursor')
+  })
+
+  it('returns 422 when search query is empty', async () => {
+    const app = buildApp()
+    const response = await app.handle(
+      searchPostsRequest(
+        new URLSearchParams({
+          q: '',
+        })
+      )
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(422)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('VALIDATION_ERROR')
+    expect(body['errors']).toBeDefined()
+    const errors = body['errors'] as Record<string, unknown>
+    expect(typeof errors['q']).toBe('string')
+  })
+
+  it('returns 422 when search query exceeds max length', async () => {
+    const app = buildApp()
+    const response = await app.handle(
+      searchPostsRequest(
+        new URLSearchParams({
+          q: 'a'.repeat(201),
+        })
+      )
+    )
+    const body = (await response.json()) as Record<string, unknown>
+
+    expect(response.status).toBe(422)
+    expect(body['success']).toBe(false)
+    expect(body['code']).toBe('VALIDATION_ERROR')
+    expect(body['errors']).toBeDefined()
+    const errors = body['errors'] as Record<string, unknown>
+    expect(typeof errors['q']).toBe('string')
+  })
+
   it('returns 200 on get one post by id', async () => {
     const app = buildApp()
     const response = await app.handle(getPostByIdRequest(createdPost.id))
@@ -240,6 +365,7 @@ describe('post.route response contract', () => {
     const data = body['data'] as Record<string, unknown>
     expect(data['id']).toBe(createdPost.id)
     expect(data['authorId']).toBeUndefined()
+    expect(data['searchVector']).toBeUndefined()
     expect(data['author']).toEqual(postAuthor)
   })
 
@@ -267,6 +393,7 @@ describe('post.route response contract', () => {
     const data = body['data'] as Record<string, unknown>
     expect(data['createdAt']).toBe('2026-04-11T00:00:00.000Z')
     expect(data['authorId']).toBeUndefined()
+    expect(data['searchVector']).toBeUndefined()
     expect(data['author']).toEqual(postAuthor)
   })
 
@@ -288,6 +415,7 @@ describe('post.route response contract', () => {
     expect(data['title']).toBe(updatedPost.title)
     expect(data['published']).toBe(updatedPost.published)
     expect(data['updatedAt']).toBe('2026-04-12T00:00:00.000Z')
+    expect(data['searchVector']).toBeUndefined()
     expect(data['author']).toEqual(postAuthor)
   })
 
@@ -618,6 +746,36 @@ describe('post.route response contract', () => {
     )
   })
 
+  it('exposes 200/400/401/403/404/422/429/500 in OpenAPI post search responses', async () => {
+    const app = buildApp()
+    const response = await app.handle(getOpenApiSpecRequest())
+    const spec = (await response.json()) as {
+      paths?: Record<string, { get?: { responses?: Record<string, unknown> } }>
+    }
+
+    const searchPathKey = Object.keys(spec.paths ?? {}).find(
+      (path) => path === '/api/posts/search' || path === '/api/posts/search/'
+    )
+    const responses =
+      (searchPathKey
+        ? spec.paths?.[searchPathKey]?.get?.responses
+        : undefined) ?? {}
+
+    expect(Object.keys(responses)).toEqual(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      expect.arrayContaining([
+        '200',
+        '400',
+        '401',
+        '403',
+        '404',
+        '422',
+        '429',
+        '500',
+      ])
+    )
+  })
+
   it('exposes OpenAPI detail metadata for post endpoints', async () => {
     const app = buildApp()
     const response = await app.handle(getOpenApiSpecRequest())
@@ -656,11 +814,15 @@ describe('post.route response contract', () => {
     const listPathKey = Object.keys(spec.paths ?? {}).find(
       (path) => path === '/api/posts' || path === '/api/posts/'
     )
+    const searchPathKey = Object.keys(spec.paths ?? {}).find(
+      (path) => path === '/api/posts/search' || path === '/api/posts/search/'
+    )
     const postByIdPathKey = Object.keys(spec.paths ?? {}).find(
       (path) => path.includes('/api/posts') && path.includes('id')
     )
 
     expect(listPathKey).toBeDefined()
+    expect(searchPathKey).toBeDefined()
     expect(postByIdPathKey).toBeDefined()
 
     expect(spec.paths?.[listPathKey!]?.get).toMatchObject({
@@ -676,6 +838,14 @@ describe('post.route response contract', () => {
       description: 'Create a new blog post. Requires authentication.',
       tags: ['Posts'],
       operationId: 'createPost',
+    })
+
+    expect(spec.paths?.[searchPathKey!]?.get).toMatchObject({
+      summary: 'Search posts',
+      description:
+        'Search published posts by title and content using PostgreSQL full-text search.',
+      tags: ['Posts'],
+      operationId: 'searchPosts',
     })
 
     expect(spec.paths?.[postByIdPathKey!]?.get).toMatchObject({

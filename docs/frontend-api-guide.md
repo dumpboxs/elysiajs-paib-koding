@@ -18,6 +18,7 @@ Guide ini tidak membahas endpoint `/auth/*` dari Better Auth sebagai bagian dari
 Endpoint `/api/*` yang saat ini tersedia di backend:
 
 - `GET /api/posts`
+- `GET /api/posts/search`
 - `GET /api/posts/:id`
 - `POST /api/posts`
 - `PUT /api/posts/:id`
@@ -394,6 +395,12 @@ export const postListSchema = z.object({
   hasMore: z.boolean(),
 })
 
+export const searchPostsInputSchema = z.object({
+  q: z.string().trim().min(1).max(200),
+  limit: z.number().int().min(1).max(50).default(10),
+  cursor: z.string().trim().min(1).optional(),
+})
+
 export const createPostInputSchema = z.object({
   title: z.string().min(3),
   slug: z.string().min(3),
@@ -417,12 +424,19 @@ export const updatePostInputSchema = z
 export type Post = z.infer<typeof postSchema>
 export type PostList = z.infer<typeof postListSchema>
 export type CreatePostInput = z.infer<typeof createPostInputSchema>
+export type SearchPostsInput = z.infer<typeof searchPostsInputSchema>
 export type UpdatePostInput = z.infer<typeof updatePostInputSchema>
 ```
 
 Catatan:
 
 - `GET /api/posts` memakai cursor pagination
+- `GET /api/posts/search` mengembalikan shape `postListSchema`
+- endpoint search menerima query string `q`, `limit`, dan `cursor`
+- search hanya mengembalikan post yang `published`
+- hasil search diurutkan berdasarkan relevance terlebih dulu, lalu recency
+- cursor search bersifat opaque dan berasal dari response search sebelumnya
+- cursor search tidak boleh dipakai untuk `GET /api/posts`
 - bentuk `data` harus `{ items, nextCursor, hasMore }`
 - `GET /api/posts/:id` memakai `postSchema`
 - `POST /api/posts` menerima payload sesuai `createPostInputSchema`
@@ -556,10 +570,17 @@ import {
   postSchema,
   type CreatePostInput,
   type UpdatePostInput,
+  searchPostsInputSchema,
   updatePostInputSchema,
 } from './posts.schemas'
 
 type GetPostsParams = {
+  limit?: number
+  cursor?: string
+}
+
+type SearchPostsParams = {
+  q: string
   limit?: number
   cursor?: string
 }
@@ -578,6 +599,29 @@ export const getPosts = async (
     },
     signal,
   })
+
+export const searchPosts = async (
+  params: SearchPostsParams,
+  signal?: AbortSignal
+) => {
+  searchPostsInputSchema.parse({
+    q: params.q,
+    limit: params.limit ?? 10,
+    cursor: params.cursor,
+  })
+
+  return apiFetch({
+    path: '/api/posts/search',
+    method: 'GET',
+    schema: postListSchema,
+    query: {
+      q: params.q,
+      limit: params.limit ?? 10,
+      cursor: params.cursor,
+    },
+    signal,
+  })
+}
 
 export const getPostById = async (id: string, signal?: AbortSignal) =>
   apiFetch({
@@ -618,6 +662,14 @@ export const deletePost = async (id: string) =>
     }),
   })
 ```
+
+Aturan untuk endpoint search:
+
+- gunakan endpoint `GET /api/posts/search?q={query}&limit={limit}&cursor={cursor}`
+- perlakukan `cursor` sebagai opaque token, bukan nilai yang boleh dibentuk manual
+- jangan campur `cursor` search dengan cursor dari `GET /api/posts`
+- hasil search sudah diurutkan backend berdasarkan relevance lalu `createdAt`
+- query kosong harus dihentikan di client sebelum request dikirim
 
 ### Engagement API
 
@@ -765,6 +817,8 @@ export const queryKeys = {
   posts: {
     all: ['posts'] as const,
     list: (params: { limit: number }) => ['posts', 'list', params] as const,
+    search: (params: { q: string; limit: number }) =>
+      ['posts', 'search', params] as const,
     detail: (id: string) => ['posts', 'detail', id] as const,
   },
   engagement: {
@@ -792,6 +846,7 @@ Catatan khusus untuk infinite query posts:
 - untuk `useInfiniteQuery`, gunakan key yang tidak memasukkan `cursor`
 - `cursor` adalah mekanisme pagination internal, bukan identitas query dasar
 - key cukup merepresentasikan filter yang stabil, misalnya hanya `limit`
+- untuk search, filter stabilnya adalah `q` dan `limit`
 
 ## Setup TanStack Query di TanStack Start
 
@@ -880,6 +935,7 @@ import {
   deletePost,
   getPostById,
   getPosts,
+  searchPosts,
   updatePost,
 } from './posts.api'
 
@@ -897,6 +953,24 @@ export const usePostsInfiniteQuery = (limit = 10) =>
       ).then((result) => result.data),
     getNextPageParam: (lastPage) =>
       lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined,
+  })
+
+export const useSearchPostsInfiniteQuery = (query: string, limit = 10) =>
+  useInfiniteQuery({
+    queryKey: queryKeys.posts.search({ q: query, limit }),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) =>
+      searchPosts(
+        {
+          q: query,
+          limit,
+          cursor: pageParam,
+        },
+        signal
+      ).then((result) => result.data),
+    getNextPageParam: (lastPage) =>
+      lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined,
+    enabled: query.trim().length > 0,
   })
 
 export const usePostDetailQuery = (id: string) =>
@@ -1208,9 +1282,9 @@ Kontrak frontend yang harus dijaga konsisten:
 - `ApiClientError`
 - `apiFetch<TSchema>(options)`
 - `queryKeys`
-- `getPosts`, `getPostById`, `createPost`, `updatePost`, `deletePost`
+- `getPosts`, `searchPosts`, `getPostById`, `createPost`, `updatePost`, `deletePost`
 - `toggleLike`, `getLikesCount`, `getComments`, `createComment`, `updateComment`, `deleteComment`, `getCommentsCount`, `trackView`, `getViewsCount`
-- `usePostsInfiniteQuery`, `usePostDetailQuery`, `useCreatePostMutation`, `useUpdatePostMutation`, `useDeletePostMutation`
+- `usePostsInfiniteQuery`, `useSearchPostsInfiniteQuery`, `usePostDetailQuery`, `useCreatePostMutation`, `useUpdatePostMutation`, `useDeletePostMutation`
 - `useCommentsQuery`, `useLikesCountQuery`, `useViewsCountQuery`
 - `useToggleLikeMutation`, `useCreateCommentMutation`, `useUpdateCommentMutation`, `useDeleteCommentMutation`, `useTrackViewMutation`
 
@@ -1258,6 +1332,13 @@ Skenario yang harus diuji setelah implementasi:
 
 - `nextCursor` dipakai sebagai `pageParam`
 - infinite query berhenti saat `hasMore` false atau `nextCursor` null
+
+### 7. Infinite query search posts
+
+- panggil `GET /api/posts/search` dengan `q` yang valid
+- `nextCursor` dipakai sebagai `pageParam` berikutnya untuk query yang sama
+- query key hanya memakai `q` dan `limit`, bukan `cursor`
+- cursor dari list posts biasa tidak boleh dipakai untuk endpoint search
 
 ### 7. Mutation invalidation
 

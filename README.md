@@ -13,6 +13,7 @@ frontend consumption patterns, read
 ## What the API currently does
 
 - Publishes and lists blog posts with cursor-based pagination
+- Searches published posts by keyword across title and content
 - Fetches a single published post by ID
 - Creates posts for authenticated users
 - Updates posts for the owning author or an admin
@@ -45,6 +46,7 @@ frontend consumption patterns, read
 | -------- | -------------------------------- | -------- | ------------------------------------------------------ |
 | `GET`    | `/`                              | Public   | Returns a basic server response                        |
 | `GET`    | `/api/posts`                     | Public   | Published posts with cursor pagination                 |
+| `GET`    | `/api/posts/search`              | Public   | Full-text search across published post title/content   |
 | `GET`    | `/api/posts/:id`                 | Public   | Single published post                                  |
 | `POST`   | `/api/posts`                     | Required | Create a post                                          |
 | `PUT`    | `/api/posts/:id`                 | Required | Update a post owned by the current user or an admin    |

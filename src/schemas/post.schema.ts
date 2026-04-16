@@ -37,6 +37,14 @@ export const getPostsQuerySchema = z.object({
 
 export type GetPostsQuerySchema = z.infer<typeof getPostsQuerySchema>
 
+export const searchPostsQuerySchema = z.object({
+  q: z.string().trim().min(1).max(200),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+  cursor: z.string().trim().min(1).optional(),
+})
+
+export type SearchPostsQuerySchema = z.infer<typeof searchPostsQuerySchema>
+
 export const getPostByIdParamsSchema = z.object({
   id: z.string().uuid(),
 })

@@ -19,6 +19,7 @@ import {
   getPostByIdParamsSchema,
   getPostsQuerySchema,
   type GetPostsQuerySchema,
+  searchPostsQuerySchema,
   type UpdatePostBodySchema,
   updatePostBodySchema,
 } from '#/schemas/post.schema'
@@ -39,6 +40,7 @@ type FindPostForManagementResult = Awaited<
 type ListPostsResult = Awaited<
   ReturnType<typeof postService.listPublishedWithCursor>
 >
+type SearchPostsResult = Awaited<ReturnType<typeof postService.search>>
 type FindPostByIdResult = Awaited<
   ReturnType<typeof postService.findPublishedById>
 >
@@ -69,6 +71,11 @@ type PostRoutesDeps = {
   getSession: (request: Request) => Promise<AuthenticatedSession>
   isRateLimited: (input: AuthorizeCreatePostInput) => Promise<boolean>
   listPosts: (query: GetPostsQuerySchema) => Promise<ListPostsResult>
+  searchPosts: (query: {
+    query: string
+    cursor?: string
+    limit: number
+  }) => Promise<SearchPostsResult>
   updatePost: (
     id: string,
     data: UpdatePostBodySchema
@@ -88,6 +95,7 @@ const postResponseDataSchema = selectPostSchema
   .omit({
     authorId: true,
     createdAt: true,
+    searchVector: true,
     updatedAt: true,
   })
   .extend({
@@ -152,6 +160,7 @@ const defaultPostRoutesDeps: PostRoutesDeps = {
   },
   isRateLimited: async () => false,
   listPosts: (query) => postService.listPublishedWithCursor(query),
+  searchPosts: (query) => postService.search(query),
   updatePost: (id, data) => postService.update(id, data),
 }
 
@@ -183,13 +192,15 @@ const mapPostResponse = <
       image: string | null
     }
     authorId?: unknown
+    searchVector?: unknown
     createdAt: unknown
     updatedAt: unknown
   },
 >(
   post: T
 ) => {
-  const { authorId: _authorId, ...rest } = post
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { authorId: _authorId, searchVector: _searchVector, ...rest } = post
 
   return {
     ...rest,
@@ -324,6 +335,79 @@ export const createPostRoutes = (deps: CreatePostRoutesDeps = {}) => {
             'Retrieve a paginated list of published posts with cursor-based pagination.',
           tags: ['Posts'],
           operationId: 'listPosts',
+        },
+      }
+    )
+    .get(
+      '/search',
+      async ({ query }) => {
+        logger.debug({
+          message: 'Processing search posts request',
+          metadata: {
+            cursor: query.cursor ?? null,
+            limit: query.limit,
+            query: query.q,
+          },
+        })
+
+        try {
+          const posts = await runtimeDeps.searchPosts({
+            query: query.q,
+            cursor: query.cursor,
+            limit: query.limit,
+          })
+
+          logger.debug({
+            message: 'Mapped search posts response',
+            metadata: {
+              count: posts.items.length,
+              hasMore: posts.hasMore,
+              nextCursor: posts.nextCursor,
+              query: query.q,
+            },
+          })
+
+          return {
+            success: true,
+            message: 'Posts fetched successfully',
+            data: {
+              items: posts.items.map((post) => mapPostResponse(post)),
+              nextCursor: posts.nextCursor,
+              hasMore: posts.hasMore,
+            },
+          }
+        } catch (error) {
+          if (error instanceof InvalidCursorError) {
+            logger.warn({
+              message: 'Search posts rejected due to invalid cursor',
+              metadata: {
+                cursor: query.cursor ?? null,
+                query: query.q,
+              },
+              error,
+            })
+            return elysiaStatus(
+              400,
+              createErrorResponse(400, {
+                message: 'Invalid cursor',
+              })
+            )
+          }
+
+          throw error
+        }
+      },
+      {
+        query: searchPostsQuerySchema,
+        response: withStandardResponses({
+          200: getPostsResponseSchema,
+        }),
+        detail: {
+          summary: 'Search posts',
+          description:
+            'Search published posts by title and content using PostgreSQL full-text search.',
+          tags: ['Posts'],
+          operationId: 'searchPosts',
         },
       }
     )
