@@ -22,6 +22,20 @@
       "when": 1776011132045,
       "tag": "0002_careful_maelstrom",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776332275739,
+      "tag": "0003_wakeful_magik",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776339711378,
+      "tag": "0004_gorgeous_fixer",
+      "breakpoints": true
     }
   ]
 }

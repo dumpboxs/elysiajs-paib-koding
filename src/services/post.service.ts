@@ -1,4 +1,6 @@
-import { and, desc, eq, lt, or } from 'drizzle-orm'
+import { createHash } from 'node:crypto'
+
+import { and, desc, eq, lt, or, sql } from 'drizzle-orm'
 
 import {
   type CreatePostBodySchema,
@@ -7,15 +9,34 @@ import {
 } from '#/schemas/post.schema'
 
 import { db } from '#/db'
-import { postTable, userTable } from '#/db/schemas'
+import {
+  publicPostSelection,
+  type PublicPost,
+  postTable,
+  userTable,
+} from '#/db/schemas'
 import { createServiceLogger } from '#/lib/logger'
 
-type CursorPayload = {
+type ListCursorPayload = {
+  kind: 'list'
   createdAt: string
   id: string
 }
 
-type PostRecord = typeof postTable.$inferSelect
+type SearchCursorPayload = {
+  kind: 'search'
+  rank: number
+  createdAt: string
+  id: string
+}
+
+type SearchPostsInput = {
+  query: string
+  cursor?: string
+  limit: number
+}
+
+type PostRecord = PublicPost
 
 type PostAuthor = {
   id: string
@@ -35,15 +56,49 @@ type PostWithAuthorRow = {
 
 const logger = createServiceLogger('postService')
 
-const encodeCursor = (payload: CursorPayload) =>
+const encodeCursor = (payload: ListCursorPayload | SearchCursorPayload) =>
   Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
 
-const decodeCursor = (cursor: string): CursorPayload => {
+const decodeListCursor = (cursor: string): ListCursorPayload => {
   try {
     const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
-    const parsed = JSON.parse(decoded) as CursorPayload
+    const parsed = JSON.parse(decoded) as ListCursorPayload
 
-    if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string') {
+    if (
+      parsed.kind !== 'list' ||
+      typeof parsed.createdAt !== 'string' ||
+      typeof parsed.id !== 'string'
+    ) {
+      throw new InvalidCursorError()
+    }
+
+    const createdAt = new Date(parsed.createdAt)
+    if (Number.isNaN(createdAt.getTime())) throw new InvalidCursorError()
+
+    return parsed
+  } catch {
+    logger.warn({
+      message: 'Invalid cursor received',
+      metadata: {
+        cursor,
+      },
+    })
+    throw new InvalidCursorError()
+  }
+}
+
+const decodeSearchCursor = (cursor: string): SearchCursorPayload => {
+  try {
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
+    const parsed = JSON.parse(decoded) as SearchCursorPayload
+
+    if (
+      parsed.kind !== 'search' ||
+      typeof parsed.createdAt !== 'string' ||
+      typeof parsed.id !== 'string' ||
+      typeof parsed.rank !== 'number' ||
+      !Number.isFinite(parsed.rank)
+    ) {
       throw new InvalidCursorError()
     }
 
@@ -65,8 +120,18 @@ const decodeCursor = (cursor: string): CursorPayload => {
 const toCursorDate = (value: Date | string) =>
   value instanceof Date ? value : new Date(value)
 
+const toCursorRank = (value: number | string) => Number(value)
+
+const hashSearchQuery = (query: string) =>
+  createHash('sha256').update(query, 'utf8').digest('hex')
+
+const getSearchQueryLogMetadata = (query: string) => ({
+  queryHash: hashSearchQuery(query),
+  queryLength: query.length,
+})
+
 const postWithAuthorSelection = {
-  post: postTable,
+  post: publicPostSelection,
   author: {
     id: userTable.id,
     name: userTable.name,
@@ -375,7 +440,7 @@ export const postService = {
     })
 
     try {
-      const parsedCursor = cursor ? decodeCursor(cursor) : null
+      const parsedCursor = cursor ? decodeListCursor(cursor) : null
       const cursorDate = parsedCursor
         ? toCursorDate(parsedCursor.createdAt)
         : null
@@ -420,6 +485,7 @@ export const postService = {
       const nextCursor =
         hasMore && lastItem
           ? encodeCursor({
+              kind: 'list',
               createdAt: toCursorDate(lastItem.createdAt).toISOString(),
               id: lastItem.id,
             })
@@ -455,6 +521,128 @@ export const postService = {
         metadata: {
           cursorProvided: Boolean(cursor),
           limit,
+        },
+        error,
+        duration: performance.now() - startedAt,
+      })
+
+      throw error
+    }
+  },
+
+  search: async ({ query, cursor, limit }: SearchPostsInput) => {
+    const startedAt = performance.now()
+
+    logger.debug({
+      message: 'Searching published posts',
+      metadata: {
+        cursorProvided: Boolean(cursor),
+        limit,
+        ...getSearchQueryLogMetadata(query),
+      },
+    })
+
+    try {
+      const parsedCursor = cursor ? decodeSearchCursor(cursor) : null
+      const cursorDate = parsedCursor
+        ? toCursorDate(parsedCursor.createdAt)
+        : null
+      const tsQuery = sql`plainto_tsquery('english', ${query})`
+      const rankExpression = sql<number>`ts_rank(${postTable.searchVector}, ${tsQuery})`
+
+      if (parsedCursor) {
+        logger.debug({
+          message: 'Decoded posts search cursor',
+          metadata: {
+            cursor: parsedCursor,
+          },
+        })
+      }
+
+      const whereCondition = and(
+        eq(postTable.published, true),
+        sql`${postTable.searchVector} @@ ${tsQuery}`,
+        parsedCursor && cursorDate
+          ? sql`(
+              ${rankExpression} < ${parsedCursor.rank}
+              or (
+                ${rankExpression} = ${parsedCursor.rank}
+                and (
+                  ${postTable.createdAt} < ${cursorDate}
+                  or (
+                    ${postTable.createdAt} = ${cursorDate}
+                    and ${postTable.id} < ${parsedCursor.id}
+                  )
+                )
+              )
+            )`
+          : undefined
+      )
+
+      const rows = await db
+        .select({
+          ...postWithAuthorSelection,
+          rank: rankExpression.as('rank'),
+        })
+        .from(postTable)
+        .innerJoin(userTable, eq(postTable.authorId, userTable.id))
+        .where(whereCondition)
+        .orderBy(
+          desc(rankExpression),
+          desc(postTable.createdAt),
+          desc(postTable.id)
+        )
+        .limit(limit + 1)
+
+      const hasMore = rows.length > limit
+      const searchRows = hasMore ? rows.slice(0, limit) : rows
+      const items = searchRows.map(
+        (row): PostWithAuthor => mapPostWithAuthorRow(row)
+      )
+      const lastItem = searchRows.at(-1)
+
+      const nextCursor =
+        hasMore && lastItem
+          ? encodeCursor({
+              kind: 'search',
+              rank: toCursorRank(lastItem.rank),
+              createdAt: toCursorDate(lastItem.post.createdAt).toISOString(),
+              id: lastItem.post.id,
+            })
+          : null
+
+      if (nextCursor) {
+        logger.debug({
+          message: 'Encoded posts search cursor',
+          metadata: {
+            nextCursor,
+          },
+        })
+      }
+
+      logger.info({
+        message: 'Published post search completed successfully',
+        metadata: {
+          count: items.length,
+          hasMore,
+          nextCursor,
+          ...getSearchQueryLogMetadata(query),
+        },
+        duration: performance.now() - startedAt,
+      })
+
+      return {
+        items,
+        nextCursor,
+        hasMore,
+      }
+    } catch (error) {
+      logger.error({
+        message: 'Search published posts failed',
+        metadata: {
+          cursorProvided: Boolean(cursor),
+          limit,
+          ...getSearchQueryLogMetadata(query),
         },
         error,
         duration: performance.now() - startedAt,
