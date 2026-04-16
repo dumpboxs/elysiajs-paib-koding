@@ -306,6 +306,7 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 3,
   },
+  trustedOrigins: [env.CORS_ORIGIN],
 })
 
 export const getRequestAuthSession = async (request: Request) => {
@@ -376,3 +377,5 @@ export const OpenAPI = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unnecessary-type-assertion
   components: getSchema().then(({ components }) => components) as Promise<any>,
 } as const
+
+export * from './authorization'

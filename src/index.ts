@@ -16,7 +16,7 @@ const logger = createServiceLogger('server')
 const app = new Elysia()
   .use(
     cors({
-      origin: 'http://localhost:3001',
+      origin: env.CORS_ORIGIN,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       credentials: true,
       allowedHeaders: ['Content-Type', 'Authorization'],
