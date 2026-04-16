@@ -135,7 +135,8 @@ const indexExists = async (
       select exists (
         select 1
         from pg_indexes
-        where tablename = $1
+        where schemaname = 'public'
+          and tablename = $1
           and indexname = $2
       ) as exists
     `,
