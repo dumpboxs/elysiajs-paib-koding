@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import { and, desc, eq, lt, or, sql } from 'drizzle-orm'
 
 import {
@@ -11,11 +13,13 @@ import { postTable, userTable } from '#/db/schemas'
 import { createServiceLogger } from '#/lib/logger'
 
 type ListCursorPayload = {
+  kind: 'list'
   createdAt: string
   id: string
 }
 
 type SearchCursorPayload = {
+  kind: 'search'
   rank: number
   createdAt: string
   id: string
@@ -55,7 +59,11 @@ const decodeListCursor = (cursor: string): ListCursorPayload => {
     const decoded = Buffer.from(cursor, 'base64url').toString('utf8')
     const parsed = JSON.parse(decoded) as ListCursorPayload
 
-    if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string') {
+    if (
+      parsed.kind !== 'list' ||
+      typeof parsed.createdAt !== 'string' ||
+      typeof parsed.id !== 'string'
+    ) {
       throw new InvalidCursorError()
     }
 
@@ -80,6 +88,7 @@ const decodeSearchCursor = (cursor: string): SearchCursorPayload => {
     const parsed = JSON.parse(decoded) as SearchCursorPayload
 
     if (
+      parsed.kind !== 'search' ||
       typeof parsed.createdAt !== 'string' ||
       typeof parsed.id !== 'string' ||
       typeof parsed.rank !== 'number' ||
@@ -107,6 +116,14 @@ const toCursorDate = (value: Date | string) =>
   value instanceof Date ? value : new Date(value)
 
 const toCursorRank = (value: number | string) => Number(value)
+
+const hashSearchQuery = (query: string) =>
+  createHash('sha256').update(query, 'utf8').digest('hex')
+
+const getSearchQueryLogMetadata = (query: string) => ({
+  queryHash: hashSearchQuery(query),
+  queryLength: query.length,
+})
 
 const postWithAuthorSelection = {
   post: postTable,
@@ -463,6 +480,7 @@ export const postService = {
       const nextCursor =
         hasMore && lastItem
           ? encodeCursor({
+              kind: 'list',
               createdAt: toCursorDate(lastItem.createdAt).toISOString(),
               id: lastItem.id,
             })
@@ -515,7 +533,7 @@ export const postService = {
       metadata: {
         cursorProvided: Boolean(cursor),
         limit,
-        query,
+        ...getSearchQueryLogMetadata(query),
       },
     })
 
@@ -524,7 +542,7 @@ export const postService = {
       const cursorDate = parsedCursor
         ? toCursorDate(parsedCursor.createdAt)
         : null
-      const tsQuery = sql`plainto_tsquery('simple', ${query})`
+      const tsQuery = sql`plainto_tsquery('english', ${query})`
       const rankExpression = sql<number>`ts_rank(${postTable.searchVector}, ${tsQuery})`
 
       if (parsedCursor) {
@@ -581,6 +599,7 @@ export const postService = {
       const nextCursor =
         hasMore && lastItem
           ? encodeCursor({
+              kind: 'search',
               rank: toCursorRank(lastItem.rank),
               createdAt: toCursorDate(lastItem.post.createdAt).toISOString(),
               id: lastItem.post.id,
@@ -602,7 +621,7 @@ export const postService = {
           count: items.length,
           hasMore,
           nextCursor,
-          query,
+          ...getSearchQueryLogMetadata(query),
         },
         duration: performance.now() - startedAt,
       })
@@ -618,7 +637,7 @@ export const postService = {
         metadata: {
           cursorProvided: Boolean(cursor),
           limit,
-          query,
+          ...getSearchQueryLogMetadata(query),
         },
         error,
         duration: performance.now() - startedAt,

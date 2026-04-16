@@ -29,6 +29,13 @@
       "when": 1776332275739,
       "tag": "0003_wakeful_magik",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776339711378,
+      "tag": "0004_gorgeous_fixer",
+      "breakpoints": true
     }
   ]
 }

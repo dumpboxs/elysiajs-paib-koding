@@ -31,8 +31,8 @@ export const postTable = pgTable(
       .notNull()
       .references(() => userTable.id, { onDelete: 'cascade' }),
     searchVector: tsvector('search_vector').generatedAlwaysAs(sql`
-      setweight(to_tsvector('simple', coalesce(${sql.identifier('title')}, '')), 'A') ||
-      setweight(to_tsvector('simple', coalesce(${sql.identifier('content')}, '')), 'B')
+      setweight(to_tsvector('english', coalesce(${sql.identifier('title')}, '')), 'A') ||
+      setweight(to_tsvector('english', coalesce(${sql.identifier('content')}, '')), 'B')
     `),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at')

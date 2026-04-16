@@ -604,7 +604,7 @@ export const searchPosts = async (
   params: SearchPostsParams,
   signal?: AbortSignal
 ) => {
-  searchPostsInputSchema.parse({
+  const parsed = searchPostsInputSchema.parse({
     q: params.q,
     limit: params.limit ?? 10,
     cursor: params.cursor,
@@ -615,9 +615,9 @@ export const searchPosts = async (
     method: 'GET',
     schema: postListSchema,
     query: {
-      q: params.q,
-      limit: params.limit ?? 10,
-      cursor: params.cursor,
+      q: parsed.q,
+      limit: parsed.limit,
+      cursor: parsed.cursor,
     },
     signal,
   })
@@ -955,14 +955,16 @@ export const usePostsInfiniteQuery = (limit = 10) =>
       lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined,
   })
 
-export const useSearchPostsInfiniteQuery = (query: string, limit = 10) =>
-  useInfiniteQuery({
-    queryKey: queryKeys.posts.search({ q: query, limit }),
+export const useSearchPostsInfiniteQuery = (query: string, limit = 10) => {
+  const normalizedQuery = query.trim()
+
+  return useInfiniteQuery({
+    queryKey: queryKeys.posts.search({ q: normalizedQuery, limit }),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
       searchPosts(
         {
-          q: query,
+          q: normalizedQuery,
           limit,
           cursor: pageParam,
         },
@@ -970,8 +972,9 @@ export const useSearchPostsInfiniteQuery = (query: string, limit = 10) =>
       ).then((result) => result.data),
     getNextPageParam: (lastPage) =>
       lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined,
-    enabled: query.trim().length > 0,
+    enabled: normalizedQuery.length > 0,
   })
+}
 
 export const usePostDetailQuery = (id: string) =>
   useQuery({
